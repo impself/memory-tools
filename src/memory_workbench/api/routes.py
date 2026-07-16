@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from memory_workbench.domain import service
@@ -67,6 +67,7 @@ class CorrectIn(BaseModel):
     value: str | None = None
     client_id: str
     agent_id: str | None = None
+    scope: ScopeIn
 
 
 class MemoryOut(BaseModel):
@@ -172,6 +173,7 @@ def list_memories(
 @router.post("/memories")
 def propose_memories(body: ProposeIn) -> MemoryOut:
     from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
 
     sess = session_dep()
     try:
@@ -192,9 +194,9 @@ def propose_memories(body: ProposeIn) -> MemoryOut:
         )
         try:
             rec = service.propose(sess, ctx, inp)
-        except ValueError as e:
+        except Exception as e:
             sess.rollback()
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise to_http(e) from e
         sess.commit()
         return _record_to_out(rec)
     finally:
@@ -235,13 +237,14 @@ def search_memories(body: SearchIn) -> SearchOut:
 @router.post("/memories/{memory_id}/correct")
 def correct_memory(memory_id: str, body: CorrectIn) -> MemoryOut:
     from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
 
     sess = session_dep()
     try:
         ctx = CallerContext(
             client_id=body.client_id,
             agent_id=body.agent_id,
-            scope=MemoryScope(level=ScopeLevel.GLOBAL),
+            scope=body.scope.to_domain(),
         )
         inp = service.CorrectInput(
             memory_id=memory_id,
@@ -250,9 +253,9 @@ def correct_memory(memory_id: str, body: CorrectIn) -> MemoryOut:
         )
         try:
             rec = service.correct(sess, ctx, inp)
-        except ValueError as e:
+        except Exception as e:
             sess.rollback()
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise to_http(e) from e
         sess.commit()
         return _record_to_out(rec)
     finally:
@@ -260,12 +263,99 @@ def correct_memory(memory_id: str, body: CorrectIn) -> MemoryOut:
 
 
 @router.get("/memories/{memory_id}/explain")
-def explain_memory(memory_id: str) -> dict:
+def explain_memory(memory_id: str, client_id: str, level: str = "global") -> dict:
     from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
 
     sess = session_dep()
     try:
-        return service.explain(sess, memory_id)
+        ctx = CallerContext(
+            client_id=client_id,
+            agent_id=None,
+            scope=MemoryScope(level=ScopeLevel(level)),
+        )
+        try:
+            return service.explain(sess, ctx, memory_id)
+        except Exception as e:
+            raise to_http(e) from e
+    finally:
+        sess.close()
+
+
+class LifecycleIn(BaseModel):
+    actor_id: str = "web-ui"
+    reason: str | None = None
+
+
+@router.post("/memories/{memory_id}/approve")
+def approve_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
+    from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
+
+    sess = session_dep()
+    try:
+        try:
+            rec = service.approve(sess, memory_id, actor_id=body.actor_id)
+        except Exception as e:
+            sess.rollback()
+            raise to_http(e) from e
+        sess.commit()
+        return _record_to_out(rec)
+    finally:
+        sess.close()
+
+
+@router.post("/memories/{memory_id}/quarantine")
+def quarantine_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
+    from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
+
+    sess = session_dep()
+    try:
+        try:
+            rec = service.quarantine(sess, memory_id, actor_id=body.actor_id, reason=body.reason)
+        except Exception as e:
+            sess.rollback()
+            raise to_http(e) from e
+        sess.commit()
+        return _record_to_out(rec)
+    finally:
+        sess.close()
+
+
+@router.post("/memories/{memory_id}/revoke")
+def revoke_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
+    from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
+
+    sess = session_dep()
+    try:
+        try:
+            rec = service.revoke(sess, memory_id, actor_id=body.actor_id, reason=body.reason)
+        except Exception as e:
+            sess.rollback()
+            raise to_http(e) from e
+        sess.commit()
+        return _record_to_out(rec)
+    finally:
+        sess.close()
+
+
+@router.post("/memories/{memory_id}/purge")
+def purge_memory(memory_id: str, body: LifecycleIn) -> dict:
+    """Hard delete. Spec §10: scrub content + projection; tombstone remains."""
+    from memory_workbench.api.deps import session_dep
+    from memory_workbench.api.errors import to_http
+
+    sess = session_dep()
+    try:
+        try:
+            service.purge(sess, memory_id, actor_id=body.actor_id)
+        except Exception as e:
+            sess.rollback()
+            raise to_http(e) from e
+        sess.commit()
+        return {"memory_id": memory_id, "purged": True}
     finally:
         sess.close()
 

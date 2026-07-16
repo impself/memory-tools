@@ -61,10 +61,11 @@ def test_tracer_bullet_chain(session):
     assert rec.state == MemoryState.ACTIVE
     assert rec.id.startswith("mem_")
 
-    # Event logged
+    # Event logged: PROPOSED + APPROVED (auto-approve path)
     events = repo.list_events(session, rec.id)
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0].event_type.value == "memory.proposed"
+    assert events[1].event_type.value == "memory.approved"
 
     # Projection visible
     fetched = repo.get_record(session, rec.id)
@@ -161,8 +162,10 @@ def test_projection_rebuildable(session):
 
 def test_secret_detection_blocks_write(session):
     """Credentials must be refused at write (spec §10)."""
+    from memory_workbench.domain.errors import SecretContent
+
     ctx = _ctx("client-a", project_id="demo")
-    with pytest.raises(ValueError, match="credential"):
+    with pytest.raises(SecretContent):
         service.propose(
             session, ctx,
             service.ProposeInput(

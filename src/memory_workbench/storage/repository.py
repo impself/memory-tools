@@ -195,7 +195,8 @@ def find_active_conflict(
     predicate: str,
     scope: MemoryScope,
 ) -> MemoryRecord | None:
-    """Return any ACTIVE record sharing subject+predicate whose scope matches."""
+    """Return any ACTIVE record sharing subject+predicate whose scope is visible
+    to the caller's `scope`."""
     stmt = select(MemoryRow).where(
         MemoryRow.subject == subject,
         MemoryRow.predicate == predicate,
@@ -204,9 +205,44 @@ def find_active_conflict(
     rows = session.execute(stmt).scalars().all()
     for row in rows:
         rec = _row_to_record(row)
-        if rec.scope.matches(scope) or scope.matches(rec.scope):
+        if scope.can_read(rec.scope):
             return rec
     return None
+
+
+def delete_projection(session: Session, memory_id: str) -> None:
+    """Remove the MemoryRow for a purged memory. Tombstone lives in events."""
+    row = session.get(MemoryRow, memory_id)
+    if row is not None:
+        session.delete(row)
+
+
+def scrub_events_for_purge(session: Session, memory_id: str) -> None:
+    """Spec §10: remove content/value from all prior event payloads for this memory.
+
+    Keeps the event id + type + actor + timestamp + relations; zeroes the
+    text fields so rebuild never resurrects content.
+    """
+    stmt = select(EventRow).where(EventRow.memory_id == memory_id)
+    rows = session.execute(stmt).scalars().all()
+    scrub_fields = ("content", "value", "subject", "predicate")
+    for row in rows:
+        if not row.payload:
+            continue
+        new_payload = dict(row.payload)
+        for field in scrub_fields:
+            if field in new_payload:
+                new_payload[field] = None
+        row.payload = new_payload
+
+
+def has_tombstone(session: Session, memory_id: str) -> bool:
+    """True if event ledger contains a PURGED event for this memory."""
+    stmt = select(EventRow).where(
+        EventRow.memory_id == memory_id,
+        EventRow.event_type == EventType.PURGED.value,
+    )
+    return session.execute(stmt).first() is not None
 
 
 def write_trace(session: Session, trace: RetrievalTrace) -> None:
@@ -279,13 +315,17 @@ def rebuild_projection(session: Session) -> int:
 def _fold_events_to_record(
     memory_id: str, events: list[EventRow]
 ) -> dict[str, Any] | None:
-    """Apply events in order. Returns dict for row, or None if purged/empty."""
+    """Apply events in order. Returns dict for row, or None if purged/empty.
+
+    PROPOSED/CORRECTED carry the content payload; APPROVED/QUARANTINED/etc
+    are state-only transitions and preserve the prior payload.
+    """
     state: dict[str, Any] | None = None
     for ev in events:
         et = EventType(ev.event_type)
         if et == EventType.PURGED:
             return None
-        if et in (EventType.PROPOSED, EventType.APPROVED, EventType.CORRECTED):
+        if et in (EventType.PROPOSED, EventType.CORRECTED):
             p = ev.payload
             state = {
                 "id": memory_id,
@@ -295,7 +335,11 @@ def _fold_events_to_record(
                 "predicate": p.get("predicate"),
                 "value": p.get("value"),
                 "scope": p["scope"],
-                "state": MemoryState.ACTIVE.value if et != EventType.PROPOSED else MemoryState.CANDIDATE.value,
+                "state": (
+                    MemoryState.CANDIDATE.value
+                    if et == EventType.PROPOSED
+                    else MemoryState.ACTIVE.value
+                ),
                 "confidence": p.get("confidence"),
                 "sensitivity": p.get("sensitivity", MemorySensitivity.NORMAL.value),
                 "valid_from": p.get("valid_from", ev.timestamp.isoformat()),
@@ -305,6 +349,10 @@ def _fold_events_to_record(
                 "created_at": ev.timestamp.isoformat(),
                 "updated_at": ev.timestamp.isoformat(),
             }
+        elif et == EventType.APPROVED:
+            if state is not None:
+                state["state"] = MemoryState.ACTIVE.value
+                state["updated_at"] = ev.timestamp.isoformat()
         elif et == EventType.SUPERSEDED:
             if state is not None:
                 state["state"] = MemoryState.SUPERSEDED.value
@@ -312,9 +360,11 @@ def _fold_events_to_record(
         elif et == EventType.QUARANTINED:
             if state is not None:
                 state["state"] = MemoryState.QUARANTINED.value
+                state["updated_at"] = ev.timestamp.isoformat()
         elif et == EventType.REVOKED:
             if state is not None:
                 state["state"] = MemoryState.REVOKED.value
+                state["updated_at"] = ev.timestamp.isoformat()
     return state
 
 

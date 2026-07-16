@@ -1,7 +1,9 @@
-"""MCP server exposing memory_propose, memory_search, memory_correct.
+"""MCP server exposing memory_propose, memory_search, memory_get, memory_correct,
+memory_forget, memory_explain.
 
-Reuses the same domain service layer as HTTP. Runs as stdio transport
-(the simplest path for Codex / Claude Desktop / Cursor to spawn it).
+Reuses the same domain service layer as HTTP. Runs as stdio transport.
+Per spec §7: agents never directly issue approved/purged; revoke-only for
+forget.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from memory_workbench.api.deps import session_dep
+from memory_workbench.api.errors import to_mcp
 from memory_workbench.domain import service
 from memory_workbench.domain.models import (
     CallerContext,
@@ -39,6 +42,17 @@ def _scope_from_params(
     )
 
 
+def _ok(payload: dict) -> str:
+    return json.dumps(payload)
+
+
+def _err(exc: Exception) -> str:
+    return json.dumps(to_mcp(exc))
+
+
+# --- 6 MCP tools (spec §7) ----------------------------------------------
+
+
 @mcp.tool()
 def memory_propose(
     content: str,
@@ -59,8 +73,10 @@ def memory_propose(
 
     kind: preference|fact|decision|constraint|procedure|experience
     level: global|workspace|project|agent|session
-    auto_approve: set true for low-risk project conventions (active immediately)
-    Returns: JSON {memory_id, state}.
+    auto_approve: set true for low-risk project conventions (active immediately
+    via an APPROVED event recorded with ActorType.SYSTEM).
+
+    Returns JSON {memory_id, state} on success, {error: {...}} on failure.
     """
     sess = session_dep()
     try:
@@ -78,12 +94,16 @@ def memory_propose(
         )
         try:
             rec = service.propose(sess, ctx, inp)
-        except ValueError as e:
+        except Exception as e:
             sess.rollback()
-            return json.dumps({"error": str(e)})
+            return _err(e)
         sess.commit()
-        return json.dumps(
-            {"memory_id": rec.id, "state": rec.state.value, "supersedes_id": rec.supersedes_id}
+        return _ok(
+            {
+                "memory_id": rec.id,
+                "state": rec.state.value,
+                "supersedes_id": rec.supersedes_id,
+            }
         )
     finally:
         sess.close()
@@ -102,25 +122,33 @@ def memory_search(
     include_inactive: bool = False,
     limit: int = 20,
 ) -> str:
-    """Search active memories within a scope.
+    """Search active memories visible to the caller's scope.
 
-    Returns JSON {results: [{memory_id, content, kind, subject, predicate, value,
-    scope, state, hit_reason}], trace_id}.
+    Scope filtering happens BEFORE substring match. A project-scoped caller
+    sees only global + matching workspace + own project records.
+
+    Returns JSON {results: [{memory_id, content, kind, subject, predicate,
+    value, state, hit_reason}], trace_id}.
     """
     sess = session_dep()
     try:
         scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
         ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
         kd = [MemoryKind(k) for k in kinds] if kinds else None
-        results, trace = service.search(
-            sess,
-            ctx,
-            query,
-            kinds=kd,
-            include_inactive=include_inactive,
-            limit=limit,
-        )
-        return json.dumps(
+        try:
+            results, trace = service.search(
+                sess,
+                ctx,
+                query,
+                kinds=kd,
+                include_inactive=include_inactive,
+                limit=limit,
+            )
+        except Exception as e:
+            sess.rollback()
+            return _err(e)
+        sess.commit()
+        return _ok(
             {
                 "results": [
                     {
@@ -143,42 +171,123 @@ def memory_search(
 
 
 @mcp.tool()
+def memory_get(
+    memory_id: str,
+    level: str,
+    client_id: str,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Get a memory's detail. Caller must be able to read the memory's scope."""
+    sess = session_dep()
+    try:
+        scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
+        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        try:
+            data = service.explain(sess, ctx, memory_id)
+        except Exception as e:
+            sess.rollback()
+            return _err(e)
+        sess.commit()
+        return _ok(data)
+    finally:
+        sess.close()
+
+
+@mcp.tool()
 def memory_correct(
     memory_id: str,
     content: str,
+    level: str,
     client_id: str,
-    value: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
     agent_id: str | None = None,
+    session_id: str | None = None,
+    value: str | None = None,
 ) -> str:
     """Submit a corrected version. Old record superseded, new record active.
 
-    Returns JSON {new_memory_id, old_memory_id, old_state}.
+    Caller scope must be able to read the old record; new content is secret-scanned.
     """
     sess = session_dep()
     try:
-        ctx = CallerContext(
-            client_id=client_id,
-            agent_id=agent_id,
-            scope=MemoryScope(level=ScopeLevel.GLOBAL),
-        )
-        inp = service.CorrectInput(
-            memory_id=memory_id,
-            content=content,
-            value=value,
-        )
+        scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
+        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        inp = service.CorrectInput(memory_id=memory_id, content=content, value=value)
         try:
             rec = service.correct(sess, ctx, inp)
-        except ValueError as e:
+        except Exception as e:
             sess.rollback()
-            return json.dumps({"error": str(e)})
+            return _err(e)
         sess.commit()
-        return json.dumps(
+        return _ok(
             {
                 "new_memory_id": rec.id,
                 "old_memory_id": memory_id,
                 "old_state": "superseded",
             }
         )
+    finally:
+        sess.close()
+
+
+@mcp.tool()
+def memory_forget(
+    memory_id: str,
+    level: str,
+    client_id: str,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Logical revoke only. Hard purge is reserved for the local admin API.
+
+    Spec §7: agents never directly issue purged events.
+    """
+    sess = session_dep()
+    try:
+        scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
+        # Caller must have read access before revoking — use explain for visibility check
+        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        try:
+            service.explain(sess, ctx, memory_id)  # raises if invisible
+            rec = service.revoke(sess, memory_id, actor_id=client_id, reason=reason or "agent_forget")
+        except Exception as e:
+            sess.rollback()
+            return _err(e)
+        sess.commit()
+        return _ok({"memory_id": memory_id, "state": rec.state.value})
+    finally:
+        sess.close()
+
+
+@mcp.tool()
+def memory_explain(
+    memory_id: str,
+    level: str,
+    client_id: str,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Explain why a memory exists, its event timeline, and recent reads."""
+    sess = session_dep()
+    try:
+        scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
+        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        try:
+            data = service.explain(sess, ctx, memory_id)
+        except Exception as e:
+            sess.rollback()
+            return _err(e)
+        sess.commit()
+        return _ok(data)
     finally:
         sess.close()
 
