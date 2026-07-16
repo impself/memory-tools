@@ -53,6 +53,27 @@ def test_http_proposal_rejects_auto_approval_request(client: TestClient) -> None
     assert response.json()["detail"][0]["type"] == "extra_forbidden"
 
 
+def test_lifecycle_request_rejects_spoofed_actor(client: TestClient) -> None:
+    response = client.post(
+        "/api/memories",
+        json={
+            "content": "project uses pnpm",
+            "kind": "fact",
+            "scope": _project_scope(),
+            "client_id": "web-ui",
+        },
+    )
+    memory_id = response.json()["id"]
+
+    approval = client.post(
+        f"/api/memories/{memory_id}/approve",
+        json={"actor_id": "forged-user"},
+    )
+
+    assert approval.status_code == 422
+    assert approval.json()["detail"][0]["type"] == "extra_forbidden"
+
+
 def test_http_search_persists_retrieval_trace(client: TestClient) -> None:
     memory = _create_active_memory(client)
 

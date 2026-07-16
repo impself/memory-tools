@@ -1,6 +1,7 @@
 """Event log + projection repository.
 
-Append-only events. Projection mutated in same transaction. Tracer-bullet:
+Append-only event history, with payload redaction only during hard purge.
+Projection mutated in same transaction. Tracer-bullet:
 single-process SQLite, no concurrency fan-out.
 """
 
@@ -10,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import case, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -54,6 +55,23 @@ def select_all_active_query() -> Select[tuple[MemoryRow]]:
 def select_all_query() -> Select[tuple[MemoryRow]]:
     """All records regardless of state."""
     return select(MemoryRow)
+
+
+def select_search_query(
+    *,
+    include_inactive: bool,
+    at: datetime,
+    kinds: list[MemoryKind] | None = None,
+) -> Select[tuple[MemoryRow]]:
+    """Build the state and validity-filtered base query for retrieval."""
+    stmt = select_all_query() if include_inactive else select_all_active_query()
+    stmt = stmt.where(
+        MemoryRow.valid_from <= at,
+        or_(MemoryRow.valid_until.is_(None), MemoryRow.valid_until > at),
+    )
+    if kinds:
+        stmt = stmt.where(MemoryRow.kind.in_([kind.value for kind in kinds]))
+    return stmt
 
 
 def row_to_record(row: MemoryRow) -> MemoryRecord:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from memory_workbench.domain import service
@@ -40,6 +40,17 @@ class ScopeIn(StrictRequest):
             project_id=self.project_id,
             agent_id=self.agent_id,
             session_id=self.session_id,
+        )
+
+
+class ExplainContextIn(ScopeIn):
+    client_id: str
+
+    def to_context(self) -> CallerContext:
+        return CallerContext(
+            client_id=self.client_id,
+            agent_id=self.agent_id,
+            scope=self.to_domain(),
         )
 
 
@@ -270,31 +281,15 @@ def correct_memory(memory_id: str, body: CorrectIn) -> MemoryOut:
 @router.get("/memories/{memory_id}/explain")
 def explain_memory(
     memory_id: str,
-    client_id: str,
-    level: ScopeLevel = ScopeLevel.GLOBAL,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    agent_id: str | None = None,
-    session_id: str | None = None,
+    context: Annotated[ExplainContextIn, Query()],
 ) -> dict[str, Any]:
     from memory_workbench.api.deps import session_dep
     from memory_workbench.api.errors import to_http
 
     sess = session_dep()
     try:
-        ctx = CallerContext(
-            client_id=client_id,
-            agent_id=agent_id,
-            scope=MemoryScope(
-                level=level,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                agent_id=agent_id,
-                session_id=session_id,
-            ),
-        )
         try:
-            return service.explain(sess, ctx, memory_id)
+            return service.explain(sess, context.to_context(), memory_id)
         except Exception as e:
             raise to_http(e) from e
     finally:
@@ -302,7 +297,6 @@ def explain_memory(
 
 
 class LifecycleIn(StrictRequest):
-    actor_id: str = "web-ui"
     reason: str | None = None
 
 
@@ -314,7 +308,7 @@ def approve_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
     sess = session_dep()
     try:
         try:
-            rec = service.approve(sess, memory_id, actor_id=body.actor_id)
+            rec = service.approve(sess, memory_id, actor_id="web-ui")
         except Exception as e:
             sess.rollback()
             raise to_http(e) from e
@@ -332,7 +326,7 @@ def quarantine_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
     sess = session_dep()
     try:
         try:
-            rec = service.quarantine(sess, memory_id, actor_id=body.actor_id, reason=body.reason)
+            rec = service.quarantine(sess, memory_id, actor_id="web-ui", reason=body.reason)
         except Exception as e:
             sess.rollback()
             raise to_http(e) from e
@@ -350,7 +344,7 @@ def revoke_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
     sess = session_dep()
     try:
         try:
-            rec = service.revoke(sess, memory_id, actor_id=body.actor_id, reason=body.reason)
+            rec = service.revoke(sess, memory_id, actor_id="web-ui", reason=body.reason)
         except Exception as e:
             sess.rollback()
             raise to_http(e) from e
@@ -369,7 +363,7 @@ def purge_memory(memory_id: str, body: LifecycleIn) -> dict[str, Any]:
     sess = session_dep()
     try:
         try:
-            service.purge(sess, memory_id, actor_id=body.actor_id)
+            service.purge(sess, memory_id, actor_id="web-ui")
         except Exception as e:
             sess.rollback()
             raise to_http(e) from e

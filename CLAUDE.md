@@ -115,7 +115,7 @@ Agents never directly issue `approved` / `purged` — those are user-only high-p
 
 ## Hard Rules (load-bearing)
 
-1. **Never mutate events.** Corrections append new events; projections fold.
+1. **Never mutate event identity or history.** Corrections append new events; projections fold. Hard purge is the sole exception for destructive payload-field redaction, while event id/type/actor/time/links remain immutable.
 2. **Scope before rank.** Filtering happens before FTS5 or embedding scoring.
 3. **Projection rebuildable.** Dropping `MemoryRecord` and replaying events must reproduce all non-purged records.
 4. **Purge ≠ delete row.** Must remove content column + FTS index + vector index in one txn, write contentless tombstone.

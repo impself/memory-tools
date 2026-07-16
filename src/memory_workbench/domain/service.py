@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from memory_workbench.domain.errors import (
@@ -50,7 +49,6 @@ from memory_workbench.domain.models import (
     utcnow,
 )
 from memory_workbench.storage import repository as repo
-from memory_workbench.storage.tables import MemoryRow
 
 _DEFAULT_AUTO_APPROVE_POLICY = "default-auto-approve"
 
@@ -503,19 +501,11 @@ def search(
     """
     t0 = time.perf_counter()
     q = (query or "").strip().lower()
-    stmt = (
-        repo.select_all_active_query()
-        if not include_inactive
-        else repo.select_all_query()
+    stmt = repo.select_search_query(
+        include_inactive=include_inactive,
+        at=utcnow(),
+        kinds=kinds,
     )
-    now = utcnow()
-    stmt = stmt.where(
-        MemoryRow.valid_from <= now,
-        or_(MemoryRow.valid_until.is_(None), MemoryRow.valid_until > now),
-    )
-
-    if kinds:
-        stmt = stmt.where(MemoryRow.kind.in_([k.value for k in kinds]))
 
     rows = session.execute(stmt).scalars().all()
 
