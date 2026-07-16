@@ -54,3 +54,14 @@
 5. 再建立 React + TypeScript 前端，优先 Inbox、Explorer、Trace 三个页面。
 
 每完成一项，需要同步更新本页、相关技术文档、使用说明和测试结果。
+# AgentAsset milestone addendum (2026-07-16)
+
+The 0.1.x tracer-bullet now includes a React + TypeScript + Vite management
+UI, backed by Python/FastAPI. AgentAsset, AgentEndpoint, ProjectMembership,
+and MemoryGrant are implemented and covered by integration tests. A bound
+endpoint's searches use the asset's effective active-memory set; unbound
+clients retain strict scope-only retrieval. Explicit grants can be revoked and
+never copy memory content or event history.
+
+Still deferred: durable per-endpoint delivery receipts, conflict cases,
+version graph UI, and Security Lab integration.

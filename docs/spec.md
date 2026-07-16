@@ -75,3 +75,10 @@
 - Alembic schema 迁移。
 
 当前状态以 [status.md](status.md) 为准。
+# AgentAsset scope addendum (2026-07-16)
+
+This increment adds local single-user AgentAsset management. A grant is a
+canonical-memory reference and is permitted only for active memories. Bound
+endpoint retrieval uses the asset effective set; unbound retrieval remains
+scope-before-rank. This does not add remote authentication, delivery receipts,
+team RBAC, or Security Lab.

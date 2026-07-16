@@ -23,6 +23,7 @@ from memory_workbench.domain.models import (
     MemoryScope,
     ScopeLevel,
 )
+from memory_workbench.storage import repository as repo
 
 mcp = FastMCP("memory-workbench")
 
@@ -80,7 +81,8 @@ def memory_propose(
     sess = session_dep()
     try:
         scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
-        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        asset = repo.get_asset_for_client_id(sess, client_id)
+        ctx = CallerContext(client_id=client_id, agent_id=asset.id if asset else agent_id, scope=scope)
         inp = service.ProposeInput(
             content=content,
             kind=MemoryKind(kind),
@@ -132,7 +134,8 @@ def memory_search(
     sess = session_dep()
     try:
         scope = _scope_from_params(level, workspace_id, project_id, agent_id, session_id)
-        ctx = CallerContext(client_id=client_id, agent_id=agent_id, scope=scope)
+        asset = repo.get_asset_for_client_id(sess, client_id)
+        ctx = CallerContext(client_id=client_id, agent_id=asset.id if asset else agent_id, scope=scope)
         kd = [MemoryKind(k) for k in kinds] if kinds else None
         try:
             results, trace = service.search(
@@ -141,6 +144,7 @@ def memory_search(
                 query,
                 kinds=kd,
                 limit=limit,
+                records=repo.list_asset_visible_memories(sess, asset.id) if asset else None,
             )
         except Exception as e:
             sess.rollback()

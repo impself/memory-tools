@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from memory_workbench.api.deps import reset_for_tests
 from memory_workbench.main import create_app
+from memory_workbench.mcp.server import memory_search
 
 
 @pytest.fixture
@@ -115,3 +118,85 @@ def test_asset_rejects_duplicate_endpoint_client_id(client: TestClient) -> None:
     assert client.post(f"/api/assets/{first['id']}/endpoints", json=endpoint).status_code == 200
     duplicate = client.post(f"/api/assets/{second['id']}/endpoints", json=endpoint)
     assert duplicate.status_code == 409
+
+
+def test_registered_endpoint_searches_the_asset_effective_memory_set(client: TestClient) -> None:
+    asset = _create_asset(client, "Cross-tool reviewer")
+    asset_id = str(asset["id"])
+    endpoint = client.post(
+        f"/api/assets/{asset_id}/endpoints",
+        json={"client_id": "codex-local", "platform": "codex"},
+    )
+    assert endpoint.status_code == 200
+    memory = _create_active_memory(client, "private-project")
+    assert client.post(
+        f"/api/assets/{asset_id}/grants",
+        json={"memory_id": memory["id"], "sync_mode": "manual"},
+    ).status_code == 200
+
+    response = client.post(
+        "/api/memories/search",
+        json={
+            "query": "pnpm",
+            "scope": _project_scope("unrelated-project"),
+            "client_id": "codex-local",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["record"]["id"] == memory["id"]
+    assert client.get("/api/traces").json()[0]["agent_id"] == asset_id
+
+    revoked = client.delete(f"/api/assets/{asset_id}/grants/{memory['id']}")
+    assert revoked.status_code == 200
+    assert client.post(
+        "/api/memories/search",
+        json={
+            "query": "pnpm",
+            "scope": _project_scope("unrelated-project"),
+            "client_id": "codex-local",
+        },
+    ).json()["results"] == []
+
+
+def test_grant_rejects_candidate_memory(client: TestClient) -> None:
+    asset = _create_asset(client)
+    candidate = client.post(
+        "/api/memories",
+        json={
+            "content": "needs approval",
+            "kind": "fact",
+            "scope": _project_scope(),
+            "client_id": "web-ui",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/assets/{asset['id']}/grants",
+        json={"memory_id": candidate["id"], "sync_mode": "manual"},
+    )
+    assert response.status_code == 409
+
+
+def test_registered_mcp_endpoint_searches_granted_memory(client: TestClient) -> None:
+    asset = _create_asset(client, "Claude reviewer")
+    asset_id = str(asset["id"])
+    assert client.post(
+        f"/api/assets/{asset_id}/endpoints",
+        json={"client_id": "claude-local", "platform": "claude"},
+    ).status_code == 200
+    memory = _create_active_memory(client, "isolated")
+    assert client.post(
+        f"/api/assets/{asset_id}/grants",
+        json={"memory_id": memory["id"], "sync_mode": "manual"},
+    ).status_code == 200
+
+    payload = json.loads(
+        memory_search(
+            query="pnpm",
+            level="project",
+            project_id="another-project",
+            client_id="claude-local",
+        )
+    )
+    assert payload["results"][0]["memory_id"] == memory["id"]

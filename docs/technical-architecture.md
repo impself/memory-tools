@@ -117,3 +117,16 @@ stateDiagram-v2
 - Web UI 避免将记忆内容拼入内联 JavaScript handler。
 
 如果未来允许远程绑定或允许 Agent 发起任意 localhost HTTP，请先增加真正的管理身份认证和明显的风险提示。
+# AgentAsset architecture addendum (2026-07-16)
+
+The control plane adds four relational records: `AgentAsset` (durable logical
+identity), `AgentEndpoint` (unique client installation), `ProjectMembership`,
+and `MemoryGrant`. They are projections, not memory event copies. The effective
+set is calculated from active global records, matching project/workspace
+memberships, asset-scoped records, and active explicit grants.
+
+For a bound endpoint, HTTP and MCP retrieval resolve `client_id` to an asset,
+search only that effective set, and write the asset id to `RetrievalTrace`.
+For an unbound endpoint, the existing scope-before-rank path remains in force.
+Grant creation rejects inactive records; revoking a grant removes only the
+relationship, never the canonical memory or its ledger.

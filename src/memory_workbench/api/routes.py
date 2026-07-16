@@ -142,7 +142,6 @@ class CreateAssetIn(StrictRequest):
     description: str | None = Field(default=None, max_length=4000)
     role_tags: list[str] = Field(default_factory=list, max_length=20)
     default_sync_mode: SyncMode = SyncMode.MANUAL
-    trust_level: str = Field(default="standard", min_length=1, max_length=32)
 
 
 class CreateProjectIn(StrictRequest):
@@ -257,7 +256,6 @@ def create_asset(body: CreateAssetIn) -> AgentAsset:
             description=body.description,
             role_tags=body.role_tags,
             default_sync_mode=body.default_sync_mode,
-            trust_level=body.trust_level,
         )
         sess.commit()
         return asset
@@ -336,8 +334,11 @@ def add_asset_memory_grant(asset_id: str, body: AddMemoryGrantIn) -> MemoryGrant
     sess = session_dep()
     try:
         _require_asset(sess, asset_id)
-        if repo.get_record(sess, body.memory_id) is None:
+        memory = repo.get_record(sess, body.memory_id)
+        if memory is None:
             raise HTTPException(status_code=404, detail=f"memory {body.memory_id} not found")
+        if memory.state != MemoryState.ACTIVE:
+            raise HTTPException(status_code=409, detail="only active memories can be granted")
         grant = repo.add_memory_grant(
             sess,
             asset_id=asset_id,
@@ -350,6 +351,21 @@ def add_asset_memory_grant(asset_id: str, body: AddMemoryGrantIn) -> MemoryGrant
             sess.rollback()
             raise HTTPException(status_code=409, detail="memory is already granted to this asset") from exc
         return grant
+    finally:
+        sess.close()
+
+
+@router.delete("/assets/{asset_id}/grants/{memory_id}")
+def remove_asset_memory_grant(asset_id: str, memory_id: str) -> dict[str, str]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        _require_asset(sess, asset_id)
+        if not repo.remove_memory_grant(sess, asset_id=asset_id, memory_id=memory_id):
+            raise HTTPException(status_code=404, detail="memory grant not found")
+        sess.commit()
+        return {"memory_id": memory_id, "status": "revoked"}
     finally:
         sess.close()
 
@@ -407,6 +423,19 @@ def list_project_assets(project_id: str) -> list[ProjectMembership]:
         if repo.get_project(sess, project_id) is None:
             raise HTTPException(status_code=404, detail=f"project {project_id} not found")
         return repo.list_project_memberships(sess, project_id)
+    finally:
+        sess.close()
+
+
+@router.get("/projects/{project_id}/memories")
+def list_project_memories(project_id: str) -> list[MemoryOut]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        if repo.get_project(sess, project_id) is None:
+            raise HTTPException(status_code=404, detail=f"project {project_id} not found")
+        return [_record_to_out(memory) for memory in repo.list_project_active_memories(sess, project_id)]
     finally:
         sess.close()
 
@@ -469,9 +498,10 @@ def search_memories(body: SearchIn) -> SearchOut:
 
     sess = session_dep()
     try:
+        asset = repo.get_asset_for_client_id(sess, body.client_id)
         ctx = CallerContext(
             client_id=body.client_id,
-            agent_id=body.agent_id,
+            agent_id=asset.id if asset else body.agent_id,
             scope=body.scope.to_domain(),
         )
         results, trace = service.search(
@@ -480,6 +510,7 @@ def search_memories(body: SearchIn) -> SearchOut:
             body.query,
             kinds=body.kinds,
             limit=body.limit,
+            records=repo.list_asset_visible_memories(sess, asset.id) if asset else None,
         )
         sess.commit()
         return SearchOut(

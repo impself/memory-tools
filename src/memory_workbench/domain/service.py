@@ -22,6 +22,7 @@ import hashlib
 import re
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -494,6 +495,7 @@ def search(
     kinds: list[MemoryKind] | None = None,
     include_inactive: bool = False,
     limit: int = 20,
+    records: Sequence[MemoryRecord] | None = None,
 ) -> tuple[list[SearchResult], RetrievalTrace]:
     """Scope filter first, then naive substring match. Writes a RetrievalTrace row.
 
@@ -501,18 +503,21 @@ def search(
     """
     t0 = time.perf_counter()
     q = (query or "").strip().lower()
-    stmt = repo.select_search_query(
-        include_inactive=include_inactive,
-        at=utcnow(),
-        kinds=kinds,
-    )
-
-    rows = session.execute(stmt).scalars().all()
+    if records is None:
+        stmt = repo.select_search_query(
+            include_inactive=include_inactive,
+            at=utcnow(),
+            kinds=kinds,
+        )
+        candidates_to_check = [repo.row_to_record(row) for row in session.execute(stmt).scalars()]
+    else:
+        candidates_to_check = list(records)
 
     candidates: list[tuple[MemoryRecord, str]] = []
-    for row in rows:
-        rec = repo.row_to_record(row)
-        if not ctx.scope.can_read(rec.scope):
+    for rec in candidates_to_check:
+        if records is None and not ctx.scope.can_read(rec.scope):
+            continue
+        if kinds is not None and rec.kind not in kinds:
             continue
         if q:
             haystacks = [

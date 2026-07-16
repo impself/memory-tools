@@ -43,9 +43,17 @@ assets.
    `npm run dev`. Open the Vite URL it prints for development; its `/api`
    requests proxy to the local Python service.
 3. Create an AgentAsset from the left column.
-4. Create or associate a Project in the middle column.
-5. Review active canonical memories in the right column. "Grant" creates a
-   manual or automatic grant reference; it does not create a cloned memory.
+4. Create or associate a Project in the middle column. Click a project to
+   narrow the memory panel to that project's active memories.
+5. Bind a Codex, Claude, Cursor, or custom endpoint with its `client_id`.
+   Searches from a bound client resolve to the asset's effective memory set;
+   unbound clients keep the existing strict scope-only search behaviour.
+6. Review active canonical memories in the right column. "Grant" creates a
+   reference and "Revoke" removes it; neither action creates a cloned memory.
+   Manual means an explicitly selected route. Automatic marks the grant as
+   delivery-eligible metadata; physical prompt injection/delivery receipts are
+   intentionally deferred, so both modes are searchable after being granted.
+7. "Correct" creates a new canonical version and supersedes the old one.
 6. Run `npm run build` before serving the production UI from FastAPI. The build
    output is `src/memory_workbench/static` and the Python root route serves it.
 
@@ -56,7 +64,7 @@ assets.
 - `POST` `/api/assets/{asset_id}/endpoints`
 - `POST` `/api/assets/{asset_id}/projects`
 - `GET` `/api/assets/{asset_id}/memories`
-- `POST` `/api/assets/{asset_id}/grants`
+- `POST` / `DELETE` `/api/assets/{asset_id}/grants`
 - `GET` / `POST` `/api/projects`
 - `GET` `/api/projects/{project_id}/assets`
 

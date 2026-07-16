@@ -111,7 +111,6 @@ def _asset_from_row(row: AgentAssetRow) -> AgentAsset:
         description=row.description,
         role_tags=row.role_tags,
         default_sync_mode=SyncMode(row.default_sync_mode),
-        trust_level=row.trust_level,
         status=AgentAssetStatus(row.status),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -289,7 +288,6 @@ def create_agent_asset(
     description: str | None,
     role_tags: list[str],
     default_sync_mode: SyncMode,
-    trust_level: str = "standard",
 ) -> AgentAsset:
     now = utcnow()
     row = AgentAssetRow(
@@ -298,7 +296,6 @@ def create_agent_asset(
         description=description,
         role_tags=role_tags,
         default_sync_mode=default_sync_mode.value,
-        trust_level=trust_level,
         status=AgentAssetStatus.ACTIVE.value,
         created_at=now,
         updated_at=now,
@@ -417,6 +414,15 @@ def list_asset_endpoints(session: Session, asset_id: str) -> list[AgentEndpoint]
     return [_endpoint_from_row(row) for row in rows]
 
 
+def get_asset_for_client_id(session: Session, client_id: str) -> AgentAsset | None:
+    endpoint = session.execute(
+        select(AgentEndpointRow).where(AgentEndpointRow.client_id == client_id)
+    ).scalar_one_or_none()
+    if endpoint is None:
+        return None
+    return get_agent_asset(session, endpoint.asset_id)
+
+
 def add_memory_grant(
     session: Session,
     *,
@@ -444,6 +450,19 @@ def list_asset_grants(session: Session, asset_id: str) -> list[MemoryGrant]:
     return [_grant_from_row(row) for row in rows]
 
 
+def remove_memory_grant(session: Session, *, asset_id: str, memory_id: str) -> bool:
+    row = session.execute(
+        select(MemoryGrantRow).where(
+            MemoryGrantRow.asset_id == asset_id,
+            MemoryGrantRow.memory_id == memory_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    session.delete(row)
+    return True
+
+
 def list_asset_visible_memories(session: Session, asset_id: str) -> list[MemoryRecord]:
     """Compute visibility from grants and memberships; never duplicate memory rows."""
     memberships = list_asset_memberships(session, asset_id)
@@ -463,6 +482,15 @@ def list_asset_visible_memories(session: Session, asset_id: str) -> list[MemoryR
             visible.append(record)
 
     return sorted(visible, key=lambda record: (-record.updated_at.timestamp(), record.id))
+
+
+def list_project_active_memories(session: Session, project_id: str) -> list[MemoryRecord]:
+    records = list_records(session, state=MemoryState.ACTIVE, limit=500)
+    return [
+        record
+        for record in records
+        if record.scope.level == ScopeLevel.PROJECT and record.scope.project_id == project_id
+    ]
 
 
 def list_events(session: Session, memory_id: str) -> list[MemoryEvent]:

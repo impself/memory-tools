@@ -79,7 +79,6 @@ class AgentAssetRow(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     role_tags: Mapped[list[str]] = mapped_column(JSON)
     default_sync_mode: Mapped[str] = mapped_column(String(16))
-    trust_level: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)

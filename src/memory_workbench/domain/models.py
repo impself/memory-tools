@@ -218,7 +218,6 @@ class AgentAsset(BaseModel):
     description: str | None = None
     role_tags: list[str] = Field(default_factory=list)
     default_sync_mode: SyncMode = SyncMode.MANUAL
-    trust_level: str = "standard"
     status: AgentAssetStatus = AgentAssetStatus.ACTIVE
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
