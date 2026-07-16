@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def utcnow() -> datetime:
@@ -82,39 +82,52 @@ class MemoryScope(BaseModel):
     agent_id: str | None = None
     session_id: str | None = None
 
-    def matches(self, other: MemoryScope) -> bool:
-        """Does `other` (a stored record's scope) satisfy `self` (query scope)?
+    @model_validator(mode="after")
+    def _validate_ids(self) -> MemoryScope:
+        """Levels require their id; lower levels may carry parent ids."""
+        if self.level == ScopeLevel.WORKSPACE and not self.workspace_id:
+            raise ValueError("workspace scope requires workspace_id")
+        if self.level == ScopeLevel.PROJECT and not self.project_id:
+            raise ValueError("project scope requires project_id")
+        if self.level == ScopeLevel.AGENT and not self.agent_id:
+            raise ValueError("agent scope requires agent_id")
+        if self.level == ScopeLevel.SESSION and not self.session_id:
+            raise ValueError("session scope requires session_id")
+        return self
 
-        Rule: query scope narrows. Stored broader scopes are visible from narrower
-        queries within the same id lineage. Stored narrower scopes are invisible
-        to broader queries.
+    def can_read(self, stored: MemoryScope) -> bool:
+        """Can the caller (self) read a record stored under `stored`?
+
+        Semantics:
+        - Caller at broader level cannot see narrower stored records
+          (global caller does not see project-scoped records).
+        - Caller at narrower level can see broader-or-equal stored records
+          only if every id present in `stored` matches the caller's id.
+          A None id in `stored` means "inherited from caller" (matches anything).
+
+        This replaces the older `matches()` whose call direction was ambiguous.
         """
-        # Level precedence: global > workspace > project > agent > session
         levels = list(ScopeLevel)
         q_idx = levels.index(self.level)
-        s_idx = levels.index(other.level)
-        # Stored must be at same level or broader
+        s_idx = levels.index(stored.level)
+        # Stored narrower than query → invisible.
         if s_idx > q_idx:
             return False
-        # If stored is broader (smaller idx), its ids must be compatible
-        # with query ids along the path.
-        if other.level == ScopeLevel.GLOBAL:
-            return True
-        if self.workspace_id is not None and other.workspace_id not in (None, self.workspace_id):
+        # Stored broader or equal → ids in stored must match caller ids.
+        if stored.workspace_id is not None and stored.workspace_id != self.workspace_id:
             return False
-        if other.level == ScopeLevel.WORKSPACE:
-            return True
-        if self.project_id is not None and other.project_id not in (None, self.project_id):
+        if stored.project_id is not None and stored.project_id != self.project_id:
             return False
-        if other.level == ScopeLevel.PROJECT:
-            return True
-        if self.agent_id is not None and other.agent_id not in (None, self.agent_id):
+        if stored.agent_id is not None and stored.agent_id != self.agent_id:
             return False
-        if other.level == ScopeLevel.AGENT:
-            return True
-        if self.session_id is not None and other.session_id not in (None, self.session_id):
+        if stored.session_id is not None and stored.session_id != self.session_id:
             return False
         return True
+
+    # Kept as private back-compat shim for find_active_conflict until callers
+    # migrate. New code must use can_read().
+    def _matches_deprecated(self, other: MemoryScope) -> bool:
+        return self.can_read(other)
 
 
 class MemoryRecord(BaseModel):
