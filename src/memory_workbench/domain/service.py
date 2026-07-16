@@ -18,11 +18,15 @@ commit.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from memory_workbench.domain.errors import (
@@ -46,7 +50,7 @@ from memory_workbench.domain.models import (
     utcnow,
 )
 from memory_workbench.storage import repository as repo
-
+from memory_workbench.storage.tables import MemoryRow
 
 _DEFAULT_AUTO_APPROVE_POLICY = "default-auto-approve"
 
@@ -79,6 +83,11 @@ def _ensure_not_secret(content: str) -> None:
         raise SecretContent("content matches a credential pattern; refused")
 
 
+def _redact_trace_query(query: str) -> str:
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:12]
+    return f"[redacted sha256={digest} length={len(query)}]"
+
+
 def _ensure_visible(record: MemoryRecord, ctx: CallerContext) -> None:
     if not ctx.scope.can_read(record.scope):
         raise ScopeViolation(
@@ -99,6 +108,8 @@ class ProposeInput:
     predicate: str | None = None
     value: str | None = None
     confidence: float | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
     auto_approve: bool = False
     source_id: str | None = None
     actor_id: str | None = None
@@ -166,6 +177,7 @@ def propose(session: Session, ctx: CallerContext, inp: ProposeInput) -> MemoryRe
     _ensure_not_secret(inp.content)
 
     now = utcnow()
+    valid_from = inp.valid_from or now
     memory_id = _new_id("mem")
     source_id = inp.source_id or ctx.client_id
     actor_id = inp.actor_id or ctx.agent_id or ctx.client_id
@@ -181,8 +193,8 @@ def propose(session: Session, ctx: CallerContext, inp: ProposeInput) -> MemoryRe
         "scope": scope_payload,
         "confidence": inp.confidence,
         "sensitivity": sensitivity.value,
-        "valid_from": now.isoformat(),
-        "valid_until": None,
+        "valid_from": valid_from.isoformat(),
+        "valid_until": inp.valid_until.isoformat() if inp.valid_until else None,
     }
 
     proposed_ev = MemoryEvent(
@@ -209,8 +221,8 @@ def propose(session: Session, ctx: CallerContext, inp: ProposeInput) -> MemoryRe
         state=MemoryState.CANDIDATE,
         confidence=inp.confidence,
         sensitivity=sensitivity,
-        valid_from=now,
-        valid_until=None,
+        valid_from=valid_from,
+        valid_until=inp.valid_until,
         source_id=source_id,
         supersedes_id=None,
         created_at=now,
@@ -242,7 +254,7 @@ def _approve_internal(
     actor_type: ActorType,
     actor_id: str,
     source_id: str,
-    when,
+    when: datetime,
     policy_id: str | None,
 ) -> MemoryRecord:
     _assert_transition(record.state, EventType.APPROVED)
@@ -496,9 +508,14 @@ def search(
         if not include_inactive
         else repo.select_all_query()
     )
+    now = utcnow()
+    stmt = stmt.where(
+        MemoryRow.valid_from <= now,
+        or_(MemoryRow.valid_until.is_(None), MemoryRow.valid_until > now),
+    )
 
     if kinds:
-        stmt = stmt.where(repo.MemoryRow.kind.in_([k.value for k in kinds]))
+        stmt = stmt.where(MemoryRow.kind.in_([k.value for k in kinds]))
 
     rows = session.execute(stmt).scalars().all()
 
@@ -538,7 +555,7 @@ def search(
         timestamp=utcnow(),
         client_id=ctx.client_id,
         agent_id=ctx.agent_id,
-        query=query,
+        query=_redact_trace_query(query),
         scope=ctx.scope,
         candidate_ids=[c[0].id for c in candidates],
         returned_ids=[c[0].id for c in returned],
@@ -549,7 +566,7 @@ def search(
     return [SearchResult(record=r, hit_reason=reason) for r, reason in returned], trace
 
 
-def explain(session: Session, ctx: CallerContext, memory_id: str) -> dict:
+def explain(session: Session, ctx: CallerContext, memory_id: str) -> dict[str, Any]:
     rec = repo.get_record(session, memory_id)
     if rec is None:
         if repo.has_tombstone(session, memory_id):
@@ -576,21 +593,21 @@ def explain(session: Session, ctx: CallerContext, memory_id: str) -> dict:
 
 
 __all__ = [
+    "CorrectInput",
+    "InvalidTransition",
     "MemoryError",
     "MemoryNotFound",
-    "InvalidTransition",
-    "ScopeViolation",
-    "SecretContent",
     "ProposeInput",
-    "CorrectInput",
+    "ScopeViolation",
     "SearchResult",
-    "propose",
+    "SecretContent",
     "approve",
     "correct",
-    "revoke",
-    "quarantine",
-    "purge",
-    "search",
-    "explain",
     "detect_sensitivity",
+    "explain",
+    "propose",
+    "purge",
+    "quarantine",
+    "revoke",
+    "search",
 ]

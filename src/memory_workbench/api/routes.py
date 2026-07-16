@@ -3,26 +3,30 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from memory_workbench.domain import service
 from memory_workbench.domain.models import (
     CallerContext,
     MemoryKind,
+    MemoryRecord,
     MemoryScope,
     MemoryState,
     ScopeLevel,
 )
 from memory_workbench.storage import repository as repo
 
-
 # --- request/response schemas -------------------------------------------
 
 
-class ScopeIn(BaseModel):
+class StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScopeIn(StrictRequest):
     level: ScopeLevel
     workspace_id: str | None = None
     project_id: str | None = None
@@ -39,7 +43,7 @@ class ScopeIn(BaseModel):
         )
 
 
-class ProposeIn(BaseModel):
+class ProposeIn(StrictRequest):
     content: str
     kind: MemoryKind
     scope: ScopeIn
@@ -47,22 +51,22 @@ class ProposeIn(BaseModel):
     predicate: str | None = None
     value: str | None = None
     confidence: float | None = None
-    auto_approve: bool = False
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
     client_id: str
     agent_id: str | None = None
 
 
-class SearchIn(BaseModel):
+class SearchIn(StrictRequest):
     query: str = ""
     scope: ScopeIn
     kinds: list[MemoryKind] | None = None
-    include_inactive: bool = False
-    limit: int = 20
+    limit: int = Field(default=20, ge=1, le=200)
     client_id: str
     agent_id: str | None = None
 
 
-class CorrectIn(BaseModel):
+class CorrectIn(StrictRequest):
     content: str
     value: str | None = None
     client_id: str
@@ -120,7 +124,7 @@ class TraceOut(BaseModel):
 router = APIRouter(prefix="/api")
 
 
-def _record_to_out(rec) -> MemoryOut:
+def _record_to_out(rec: MemoryRecord) -> MemoryOut:
     return MemoryOut(
         id=rec.id,
         content=rec.content,
@@ -148,7 +152,7 @@ def _record_to_out(rec) -> MemoryOut:
 
 
 @router.get("/health")
-def health() -> dict:
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -190,7 +194,8 @@ def propose_memories(body: ProposeIn) -> MemoryOut:
             predicate=body.predicate,
             value=body.value,
             confidence=body.confidence,
-            auto_approve=body.auto_approve,
+            valid_from=body.valid_from,
+            valid_until=body.valid_until,
         )
         try:
             rec = service.propose(sess, ctx, inp)
@@ -219,9 +224,9 @@ def search_memories(body: SearchIn) -> SearchOut:
             ctx,
             body.query,
             kinds=body.kinds,
-            include_inactive=body.include_inactive,
             limit=body.limit,
         )
+        sess.commit()
         return SearchOut(
             results=[
                 SearchHitOut(record=_record_to_out(r.record), hit_reason=r.hit_reason)
@@ -263,7 +268,15 @@ def correct_memory(memory_id: str, body: CorrectIn) -> MemoryOut:
 
 
 @router.get("/memories/{memory_id}/explain")
-def explain_memory(memory_id: str, client_id: str, level: str = "global") -> dict:
+def explain_memory(
+    memory_id: str,
+    client_id: str,
+    level: ScopeLevel = ScopeLevel.GLOBAL,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
     from memory_workbench.api.deps import session_dep
     from memory_workbench.api.errors import to_http
 
@@ -271,8 +284,14 @@ def explain_memory(memory_id: str, client_id: str, level: str = "global") -> dic
     try:
         ctx = CallerContext(
             client_id=client_id,
-            agent_id=None,
-            scope=MemoryScope(level=ScopeLevel(level)),
+            agent_id=agent_id,
+            scope=MemoryScope(
+                level=level,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            ),
         )
         try:
             return service.explain(sess, ctx, memory_id)
@@ -282,7 +301,7 @@ def explain_memory(memory_id: str, client_id: str, level: str = "global") -> dic
         sess.close()
 
 
-class LifecycleIn(BaseModel):
+class LifecycleIn(StrictRequest):
     actor_id: str = "web-ui"
     reason: str | None = None
 
@@ -342,7 +361,7 @@ def revoke_memory(memory_id: str, body: LifecycleIn) -> MemoryOut:
 
 
 @router.post("/memories/{memory_id}/purge")
-def purge_memory(memory_id: str, body: LifecycleIn) -> dict:
+def purge_memory(memory_id: str, body: LifecycleIn) -> dict[str, Any]:
     """Hard delete. Spec §10: scrub content + projection; tombstone remains."""
     from memory_workbench.api.deps import session_dep
     from memory_workbench.api.errors import to_http

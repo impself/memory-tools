@@ -14,7 +14,6 @@ import pytest
 from memory_workbench.api.deps import reset_for_tests, session_dep
 from memory_workbench.domain import service
 from memory_workbench.domain.models import (
-    ActorType,
     CallerContext,
     MemoryKind,
     MemoryScope,
@@ -87,6 +86,31 @@ def test_replay_after_auto_approve_keeps_active(session):
     assert after[rec.id]["content"] == before[rec.id]["content"]
 
 
+def test_event_chain_uses_approved_event_as_next_predecessor(session):
+    rec = service.propose(
+        session,
+        _ctx(),
+        service.ProposeInput(
+            content="project uses pnpm",
+            kind=MemoryKind.PREFERENCE,
+            scope=MemoryScope(level=ScopeLevel.PROJECT, project_id="demo"),
+            auto_approve=True,
+        ),
+    )
+    session.commit()
+    approved = repo.list_events(session, rec.id)[-1]
+
+    service.correct(
+        session,
+        _ctx(),
+        service.CorrectInput(memory_id=rec.id, content="project uses bun"),
+    )
+    session.commit()
+
+    superseded = repo.list_events(session, rec.id)[-1]
+    assert superseded.previous_event_id == approved.event_id
+
+
 def test_replay_preserves_supersession_chain(session):
     """Corrected memory: old superseded, new active. Rebuild must preserve both."""
     old = service.propose(
@@ -108,7 +132,6 @@ def test_replay_preserves_supersession_chain(session):
     )
     session.commit()
 
-    before = _snapshot(session)
     session.query(repo.MemoryRow).delete()  # type: ignore[attr-defined]
     session.commit()
     repo.rebuild_projection(session)

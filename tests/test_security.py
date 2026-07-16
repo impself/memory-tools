@@ -8,6 +8,8 @@ Spec §10:
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from memory_workbench.api.deps import reset_for_tests, session_dep
@@ -23,6 +25,7 @@ from memory_workbench.domain.models import (
     MemoryKind,
     MemoryScope,
     ScopeLevel,
+    utcnow,
 )
 
 
@@ -196,4 +199,25 @@ def test_search_does_not_leak_across_projects(session):
         "demo-only",
     )
     session.commit()
+    assert results == []
+
+
+def test_search_excludes_memories_outside_validity_period(session):
+    ctx = _ctx("client-a", "demo")
+    rec = service.propose(
+        session,
+        ctx,
+        service.ProposeInput(
+            content="expired project convention",
+            kind=MemoryKind.FACT,
+            scope=ctx.scope,
+            valid_until=utcnow() - timedelta(minutes=1),
+            auto_approve=True,
+        ),
+    )
+    session.commit()
+
+    results, _ = service.search(session, ctx, "expired")
+
+    assert rec.valid_until is not None
     assert results == []

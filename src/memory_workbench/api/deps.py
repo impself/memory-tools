@@ -5,7 +5,8 @@ Tracer-bullet uses module-level singleton. Production: dependency injection.
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from memory_workbench.storage.db import (
     init_schema,
@@ -13,11 +14,11 @@ from memory_workbench.storage.db import (
     make_session_factory,
 )
 
-_engine = None
-SessionFactory = None
+_engine: Engine | None = None
+SessionFactory: sessionmaker[Session] | None = None
 
 
-def get_engine():
+def get_engine() -> Engine:
     global _engine
     if _engine is None:
         _engine = make_engine()
@@ -25,7 +26,7 @@ def get_engine():
     return _engine
 
 
-def get_session_factory():
+def get_session_factory() -> sessionmaker[Session]:
     global SessionFactory
     if SessionFactory is None:
         SessionFactory = make_session_factory(get_engine())

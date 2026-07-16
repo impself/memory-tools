@@ -10,8 +10,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
+from sqlalchemy.sql.elements import ColumnElement
 
 from memory_workbench.domain.models import (
     ActorType,
@@ -27,14 +29,29 @@ from memory_workbench.domain.models import (
 )
 from memory_workbench.storage.tables import EventRow, MemoryRow, TraceRow
 
+_EVENT_TYPE_ORDER = {
+    EventType.PROPOSED.value: 0,
+    EventType.CORRECTED.value: 0,
+    EventType.APPROVED.value: 1,
+    EventType.SUPERSEDED.value: 2,
+    EventType.QUARANTINED.value: 2,
+    EventType.REVOKED.value: 3,
+    EventType.PURGED.value: 4,
+}
+
+
+def _event_type_order() -> ColumnElement[int]:
+    """Deterministic ordering for events that share a transaction timestamp."""
+    return case(_EVENT_TYPE_ORDER, value=EventRow.event_type, else_=99)
+
 
 # Public re-exports for service layer
-def select_all_active_query():
+def select_all_active_query() -> Select[tuple[MemoryRow]]:
     """Default search base: ACTIVE records."""
     return select(MemoryRow).where(MemoryRow.state == MemoryState.ACTIVE.value)
 
 
-def select_all_query():
+def select_all_query() -> Select[tuple[MemoryRow]]:
     """All records regardless of state."""
     return select(MemoryRow)
 
@@ -110,7 +127,11 @@ def _last_event_id_for(session: Session, memory_id: str) -> str | None:
     stmt = (
         select(EventRow)
         .where(EventRow.memory_id == memory_id)
-        .order_by(EventRow.timestamp.desc())
+        .order_by(
+            EventRow.timestamp.desc(),
+            _event_type_order().desc(),
+            EventRow.event_id.desc(),
+        )
     )
     row = session.execute(stmt).first()
     return row[0].event_id if row else None
@@ -169,7 +190,11 @@ def list_events(session: Session, memory_id: str) -> list[MemoryEvent]:
     stmt = (
         select(EventRow)
         .where(EventRow.memory_id == memory_id)
-        .order_by(EventRow.timestamp.asc())
+        .order_by(
+            EventRow.timestamp.asc(),
+            _event_type_order().asc(),
+            EventRow.event_id.asc(),
+        )
     )
     rows = session.execute(stmt).scalars().all()
     return [
@@ -293,10 +318,14 @@ def rebuild_projection(session: Session) -> int:
 
     Purged events leave no row. Used by tests to verify rebuildability.
     """
-    session.query(MemoryRow).delete()  # type: ignore[attr-defined]
+    session.query(MemoryRow).delete()
 
     # Group events by memory_id in chronological order
-    stmt = select(EventRow).order_by(EventRow.timestamp.asc())
+    stmt = select(EventRow).order_by(
+        EventRow.timestamp.asc(),
+        _event_type_order().asc(),
+        EventRow.event_id.asc(),
+    )
     events = session.execute(stmt).scalars().all()
 
     per_memory: dict[str, list[EventRow]] = {}

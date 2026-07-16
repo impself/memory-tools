@@ -123,13 +123,7 @@
     </div>
     <label>Client ID (caller)</label>
     <input id="client_id" placeholder="web-ui" />
-    <div class="row" style="margin-top: 12px;">
-      <label style="display:flex; align-items:center; gap:6px; flex: 0 0 auto;">
-        <input id="auto_approve" type="checkbox" style="width:auto" checked />
-        <span style="margin:0">Auto-approve (low-risk)</span>
-      </label>
-      <button id="propose-btn">Propose</button>
-    </div>
+    <button id="propose-btn" style="margin-top:12px">Propose candidate</button>
     <div id="propose-result" class="empty"></div>
 
     <h2 style="margin-top:24px">Search</h2>
@@ -178,6 +172,7 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const memoryCache = new Map();
 
     async function jsonOrError(res) {
       const text = await res.text();
@@ -197,6 +192,7 @@
     }
 
     function memHtml(m) {
+      memoryCache.set(m.id, m);
       return `
         <div class="mem ${m.state}">
           <div>${escapeHtml(m.content)}</div>
@@ -214,7 +210,10 @@
             ${m.supersedes_id ? `<span>supersedes: ${m.supersedes_id.slice(0,12)}…</span>` : ''}
           </div>
           <div style="margin-top:8px; display:flex; gap:6px">
-            <button class="ghost" onclick="correctPrompt('${m.id}', '${escapeHtml(m.content).replace(/'/g, "\\'")}')">Correct</button>
+            <button class="ghost" data-action="correct" data-memory-id="${escapeHtml(m.id)}">Correct</button>
+            ${m.state === 'candidate'
+              ? `<button class="ghost" data-action="approve" data-memory-id="${escapeHtml(m.id)}">Approve</button>`
+              : ''}
             <span class="meta" style="margin:0; flex:1; text-align:right">${new Date(m.updated_at).toLocaleString()}</span>
           </div>
         </div>`;
@@ -265,7 +264,6 @@
         subject: $('subject').value || null,
         predicate: $('predicate').value || null,
         value: $('value').value || null,
-        auto_approve: $('auto_approve').checked,
         client_id: $('client_id').value || 'web-ui',
       };
       try {
@@ -308,8 +306,10 @@
       }
     }
 
-    async function correctPrompt(id, oldContent) {
-      const content = prompt(`Correct memory ${id.slice(0,12)}…\nNew content:`, oldContent);
+    async function correctPrompt(id) {
+      const memory = memoryCache.get(id);
+      if (!memory) throw new Error(`Memory ${id} is not loaded`);
+      const content = prompt(`Correct memory ${id.slice(0,12)}…\nNew content:`, memory.content);
       if (content === null) return;
       const value = prompt('New value (leave blank to keep):', '');
       try {
@@ -320,6 +320,7 @@
             content,
             value: value || null,
             client_id: 'web-ui',
+            scope: memory.scope,
           }),
         });
         await jsonOrError(res);
@@ -329,12 +330,32 @@
       }
     }
 
+    async function approveMemory(id) {
+      const res = await fetch(`/api/memories/${id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor_id: 'web-ui' }),
+      });
+      await jsonOrError(res);
+      loadMemories();
+    }
+
     $('propose-btn').addEventListener('click', propose);
     $('search-btn').addEventListener('click', search);
     $('refresh-btn').addEventListener('click', () => { loadMemories(); loadTraces(); });
     $('filter_state').addEventListener('change', loadMemories);
 
-    window.correctPrompt = correctPrompt;
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action][data-memory-id]');
+      if (!button) return;
+      try {
+        if (button.dataset.action === 'correct') await correctPrompt(button.dataset.memoryId);
+        if (button.dataset.action === 'approve') await approveMemory(button.dataset.memoryId);
+      } catch (e) {
+        alert(`Error: ${e.message}`);
+      }
+    });
+
     loadMemories();
     loadTraces();
   </script>

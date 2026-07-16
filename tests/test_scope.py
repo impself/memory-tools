@@ -16,7 +16,6 @@ import pytest
 
 from memory_workbench.domain.models import MemoryScope, ScopeLevel
 
-
 # (caller_level, caller_ids, stored_level, stored_ids, expected_visible)
 CASES = [
     # Global caller sees only global

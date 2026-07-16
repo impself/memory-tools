@@ -9,6 +9,8 @@ forget.
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -21,7 +23,6 @@ from memory_workbench.domain.models import (
     MemoryScope,
     ScopeLevel,
 )
-
 
 mcp = FastMCP("memory-workbench")
 
@@ -42,7 +43,7 @@ def _scope_from_params(
     )
 
 
-def _ok(payload: dict) -> str:
+def _ok(payload: dict[str, Any]) -> str:
     return json.dumps(payload)
 
 
@@ -67,15 +68,13 @@ def memory_propose(
     predicate: str | None = None,
     value: str | None = None,
     confidence: float | None = None,
-    auto_approve: bool = False,
+    valid_from: datetime | None = None,
+    valid_until: datetime | None = None,
 ) -> str:
     """Submit a candidate memory.
 
     kind: preference|fact|decision|constraint|procedure|experience
     level: global|workspace|project|agent|session
-    auto_approve: set true for low-risk project conventions (active immediately
-    via an APPROVED event recorded with ActorType.SYSTEM).
-
     Returns JSON {memory_id, state} on success, {error: {...}} on failure.
     """
     sess = session_dep()
@@ -90,7 +89,8 @@ def memory_propose(
             predicate=predicate,
             value=value,
             confidence=confidence,
-            auto_approve=auto_approve,
+            valid_from=valid_from,
+            valid_until=valid_until,
         )
         try:
             rec = service.propose(sess, ctx, inp)
@@ -119,7 +119,6 @@ def memory_search(
     agent_id: str | None = None,
     session_id: str | None = None,
     kinds: list[str] | None = None,
-    include_inactive: bool = False,
     limit: int = 20,
 ) -> str:
     """Search active memories visible to the caller's scope.
@@ -141,7 +140,6 @@ def memory_search(
                 ctx,
                 query,
                 kinds=kd,
-                include_inactive=include_inactive,
                 limit=limit,
             )
         except Exception as e:

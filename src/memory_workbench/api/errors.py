@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException
 
 from memory_workbench.domain.errors import (
@@ -30,7 +32,7 @@ def to_http(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
-def to_mcp(exc: Exception) -> dict:
+def to_mcp(exc: Exception) -> dict[str, Any]:
     """Return structured MCP error body."""
     code = "INTERNAL"
     if isinstance(exc, MemoryNotFound):

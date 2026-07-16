@@ -5,18 +5,18 @@ Pure dataclasses + Pydantic models. No DB, no IO. Spec §6.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class MemoryKind(str, Enum):
+class MemoryKind(StrEnum):
     PREFERENCE = "preference"
     FACT = "fact"
     DECISION = "decision"
@@ -25,7 +25,7 @@ class MemoryKind(str, Enum):
     EXPERIENCE = "experience"
 
 
-class MemoryState(str, Enum):
+class MemoryState(StrEnum):
     CANDIDATE = "candidate"
     ACTIVE = "active"
     SUPERSEDED = "superseded"
@@ -33,13 +33,13 @@ class MemoryState(str, Enum):
     REVOKED = "revoked"
 
 
-class MemorySensitivity(str, Enum):
+class MemorySensitivity(StrEnum):
     NORMAL = "normal"
     PRIVATE = "private"
     SECRET = "secret"
 
 
-class ScopeLevel(str, Enum):
+class ScopeLevel(StrEnum):
     GLOBAL = "global"
     WORKSPACE = "workspace"
     PROJECT = "project"
@@ -47,7 +47,7 @@ class ScopeLevel(str, Enum):
     SESSION = "session"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     PROPOSED = "memory.proposed"
     APPROVED = "memory.approved"
     CORRECTED = "memory.corrected"
@@ -59,7 +59,7 @@ class EventType(str, Enum):
     EXPORTED = "memory.exported"
 
 
-class ActorType(str, Enum):
+class ActorType(StrEnum):
     USER = "user"
     AGENT = "agent"
     SYSTEM = "system"
@@ -120,9 +120,7 @@ class MemoryScope(BaseModel):
             return False
         if stored.agent_id is not None and stored.agent_id != self.agent_id:
             return False
-        if stored.session_id is not None and stored.session_id != self.session_id:
-            return False
-        return True
+        return stored.session_id is None or stored.session_id == self.session_id
 
     # Kept as private back-compat shim for find_active_conflict until callers
     # migrate. New code must use can_read().

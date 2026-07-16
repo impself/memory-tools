@@ -9,9 +9,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from memory_workbench.api.deps import get_engine  # noqa: F401 (init schema on import)
+from memory_workbench.api.deps import get_engine
 from memory_workbench.api.routes import router
-
 
 STATIC_DIR = Path(__file__).parent / "static"
 

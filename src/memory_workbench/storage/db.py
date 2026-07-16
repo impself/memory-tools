@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -23,7 +24,7 @@ def _default_db_path() -> str:
     return str(Path.cwd() / "memory_workbench.db")
 
 
-def make_engine(db_path: str | None = None):
+def make_engine(db_path: str | None = None) -> Engine:
     path = db_path or _default_db_path()
     url = f"sqlite:///{path}"
     if path == ":memory:":
@@ -38,9 +39,9 @@ def make_engine(db_path: str | None = None):
     return create_engine(url, future=True, connect_args={"check_same_thread": False})
 
 
-def init_schema(engine) -> None:
+def init_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
 
 
-def make_session_factory(engine) -> sessionmaker[Session]:
+def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
