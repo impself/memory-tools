@@ -25,7 +25,7 @@ First run creates `./memory_workbench.db` (SQLite). Bound to 127.0.0.1 only.
 - [MVP specification](docs/spec.md)
 - [Documentation maintenance](docs/maintenance.md)
 
-## Tracer-bullet chain (spec §17)
+## Tracer-bullet chain
 
 1. Start service
 2. Client A `memory_propose` → SQLite logs candidate event → projection visible

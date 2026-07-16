@@ -1,7 +1,7 @@
 # Memory Workbench 文档
 
-> 文档状态：Active  
-> 最近核对：2026-07-16  
+> 文档状态：Active
+> 最近核对：2026-07-16
 > 对应代码：`main`（2026-07-16 基线）
 
 这里是 Memory Workbench 的文档入口。当前项目处于 tracer-bullet 阶段：核心后端链路可运行，但尚未达到生产可用状态。

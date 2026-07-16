@@ -1,7 +1,8 @@
 # 使用说明
 
-> 适用版本：0.1.x tracer-bullet  
+> 文档状态：Active
 > 最近核对：2026-07-16
+> 适用版本：0.1.x tracer-bullet
 
 ## 前置条件
 

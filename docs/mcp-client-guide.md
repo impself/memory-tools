@@ -1,7 +1,8 @@
 # MCP 客户端接入
 
-> 状态：Development preview  
+> 文档状态：Draft
 > 最近核对：2026-07-16
+> 适用版本：0.1.x tracer-bullet
 
 ## 当前限制
 
@@ -49,13 +50,27 @@ Replace `cwd` with the absolute path of your local checkout.
 
 每个客户端使用稳定且可识别的 `client_id`，例如 `codex-local`、`claude-code-local` 或 `cursor-demo`。
 
-调用 project scope 时同时提供 `project_id`：
+MCP 工具使用扁平参数，不接收嵌套的 `scope` 对象。提议 project candidate 的完整 payload：
 
 ```json
 {
+  "content": "Memory Tools uses pnpm",
+  "kind": "preference",
   "level": "project",
   "project_id": "memory-tools",
   "client_id": "codex-local"
+}
+```
+
+搜索时同样在顶层提供 scope 参数：
+
+```json
+{
+  "query": "pnpm",
+  "level": "project",
+  "project_id": "memory-tools",
+  "client_id": "claude-code-local",
+  "limit": 20
 }
 ```
 

@@ -47,7 +47,10 @@ Query + caller context
 
 Critical invariant: **scope filtering happens before full-text or vector ranking.** Project constraints must not leak across projects regardless of semantic similarity.
 
-## Tech Stack
+## Target Tech Stack
+
+This is the target stack. Implemented subsets and current gaps are tracked in
+`docs/status.md`; do not infer that every item below already exists.
 
 - **Backend**: Python 3.12+, `uv` for env/deps, FastAPI + Uvicorn, Pydantic v2, SQLAlchemy 2 + Alembic + SQLite (FTS5), official MCP Python SDK, structlog.
 - **Frontend**: TypeScript strict, React + Vite (no Next.js — no SSR need), `openapi-typescript` or Orval generated from backend OpenAPI schema.

@@ -1,8 +1,8 @@
 # Memory Workbench MVP 规格 v0.1
 
-> 状态：Frozen baseline  
-> 日期：2026-07-16  
-> 适用范围：本地单用户 MVP
+> 文档状态：Frozen baseline
+> 最近核对：2026-07-16
+> 适用版本：本地单用户 MVP v0.1
 
 ## 1. 产品目标
 
