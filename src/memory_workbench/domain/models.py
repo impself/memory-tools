@@ -47,6 +47,25 @@ class ScopeLevel(StrEnum):
     SESSION = "session"
 
 
+class SyncMode(StrEnum):
+    """How a memory becomes available to an AgentAsset."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
+
+class AgentAssetStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class EndpointPlatform(StrEnum):
+    CODEX = "codex"
+    CLAUDE = "claude"
+    CURSOR = "cursor"
+    CUSTOM = "custom"
+
+
 class EventType(StrEnum):
     PROPOSED = "memory.proposed"
     APPROVED = "memory.approved"
@@ -189,6 +208,59 @@ class RetrievalTrace(BaseModel):
     hit_reasons: dict[str, str] = Field(default_factory=dict)
     elapsed_ms: int
     error: str | None = None
+
+
+class AgentAsset(BaseModel):
+    """Stable logical identity for an agent, independent of a client install."""
+
+    id: str
+    name: str
+    description: str | None = None
+    role_tags: list[str] = Field(default_factory=list)
+    default_sync_mode: SyncMode = SyncMode.MANUAL
+    trust_level: str = "standard"
+    status: AgentAssetStatus = AgentAssetStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class AgentEndpoint(BaseModel):
+    """A concrete tool/client endpoint bound to an AgentAsset."""
+
+    id: str
+    asset_id: str
+    client_id: str
+    platform: EndpointPlatform
+    display_name: str | None = None
+    status: AgentAssetStatus = AgentAssetStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Project(BaseModel):
+    id: str
+    name: str
+    workspace_id: str | None = None
+    description: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProjectMembership(BaseModel):
+    asset_id: str
+    project_id: str
+    role: str | None = None
+    sync_mode: SyncMode = SyncMode.MANUAL
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class MemoryGrant(BaseModel):
+    """A reference to canonical memory, never a duplicated memory payload."""
+
+    id: str
+    memory_id: str
+    asset_id: str
+    sync_mode: SyncMode = SyncMode.MANUAL
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 # Convenience: states that block a memory from default search results

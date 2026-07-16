@@ -5,17 +5,25 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 
 from memory_workbench.domain import service
 from memory_workbench.domain.models import (
+    AgentAsset,
+    AgentEndpoint,
     CallerContext,
+    EndpointPlatform,
+    MemoryGrant,
     MemoryKind,
     MemoryRecord,
     MemoryScope,
     MemoryState,
+    Project,
+    ProjectMembership,
     ScopeLevel,
+    SyncMode,
 )
 from memory_workbench.storage import repository as repo
 
@@ -129,6 +137,46 @@ class TraceOut(BaseModel):
     error: str | None
 
 
+class CreateAssetIn(StrictRequest):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=4000)
+    role_tags: list[str] = Field(default_factory=list, max_length=20)
+    default_sync_mode: SyncMode = SyncMode.MANUAL
+    trust_level: str = Field(default="standard", min_length=1, max_length=32)
+
+
+class CreateProjectIn(StrictRequest):
+    id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    workspace_id: str | None = Field(default=None, max_length=128)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class AddEndpointIn(StrictRequest):
+    client_id: str = Field(min_length=1, max_length=128)
+    platform: EndpointPlatform
+    display_name: str | None = Field(default=None, max_length=128)
+
+
+class AddMembershipIn(StrictRequest):
+    project_id: str = Field(min_length=1, max_length=128)
+    role: str | None = Field(default=None, max_length=128)
+    sync_mode: SyncMode = SyncMode.MANUAL
+
+
+class AddMemoryGrantIn(StrictRequest):
+    memory_id: str = Field(min_length=1, max_length=64)
+    sync_mode: SyncMode = SyncMode.MANUAL
+
+
+class AssetDetailOut(AgentAsset):
+    endpoints: list[AgentEndpoint]
+    projects: list[ProjectMembership]
+    grants: list[MemoryGrant]
+    memories: list[MemoryOut]
+    memory_count: int
+
+
 # --- router --------------------------------------------------------------
 
 
@@ -162,9 +210,205 @@ def _record_to_out(rec: MemoryRecord) -> MemoryOut:
     )
 
 
+def _asset_detail(session: Any, asset: AgentAsset) -> AssetDetailOut:
+    memories = repo.list_asset_visible_memories(session, asset.id)
+    return AssetDetailOut(
+        **asset.model_dump(),
+        endpoints=repo.list_asset_endpoints(session, asset.id),
+        projects=repo.list_asset_memberships(session, asset.id),
+        grants=repo.list_asset_grants(session, asset.id),
+        memories=[_record_to_out(memory) for memory in memories],
+        memory_count=len(memories),
+    )
+
+
+def _require_asset(session: Any, asset_id: str) -> AgentAsset:
+    asset = repo.get_agent_asset(session, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"agent asset {asset_id} not found")
+    return asset
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/assets")
+def list_assets() -> list[AssetDetailOut]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        return [_asset_detail(sess, asset) for asset in repo.list_agent_assets(sess)]
+    finally:
+        sess.close()
+
+
+@router.post("/assets")
+def create_asset(body: CreateAssetIn) -> AgentAsset:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        asset = repo.create_agent_asset(
+            sess,
+            name=body.name,
+            description=body.description,
+            role_tags=body.role_tags,
+            default_sync_mode=body.default_sync_mode,
+            trust_level=body.trust_level,
+        )
+        sess.commit()
+        return asset
+    finally:
+        sess.close()
+
+
+@router.get("/assets/{asset_id}")
+def get_asset(asset_id: str) -> AssetDetailOut:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        return _asset_detail(sess, _require_asset(sess, asset_id))
+    finally:
+        sess.close()
+
+
+@router.post("/assets/{asset_id}/endpoints")
+def add_asset_endpoint(asset_id: str, body: AddEndpointIn) -> AgentEndpoint:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        _require_asset(sess, asset_id)
+        endpoint = repo.add_agent_endpoint(
+            sess,
+            asset_id=asset_id,
+            client_id=body.client_id,
+            platform=body.platform,
+            display_name=body.display_name,
+        )
+        try:
+            sess.commit()
+        except IntegrityError as exc:
+            sess.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=f"client_id {body.client_id!r} is already bound to an agent asset",
+            ) from exc
+        return endpoint
+    finally:
+        sess.close()
+
+
+@router.post("/assets/{asset_id}/projects")
+def add_asset_project(asset_id: str, body: AddMembershipIn) -> ProjectMembership:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        _require_asset(sess, asset_id)
+        if repo.get_project(sess, body.project_id) is None:
+            raise HTTPException(status_code=404, detail=f"project {body.project_id} not found")
+        membership = repo.add_project_membership(
+            sess,
+            asset_id=asset_id,
+            project_id=body.project_id,
+            role=body.role,
+            sync_mode=body.sync_mode,
+        )
+        try:
+            sess.commit()
+        except IntegrityError as exc:
+            sess.rollback()
+            raise HTTPException(status_code=409, detail="asset is already a project member") from exc
+        return membership
+    finally:
+        sess.close()
+
+
+@router.post("/assets/{asset_id}/grants")
+def add_asset_memory_grant(asset_id: str, body: AddMemoryGrantIn) -> MemoryGrant:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        _require_asset(sess, asset_id)
+        if repo.get_record(sess, body.memory_id) is None:
+            raise HTTPException(status_code=404, detail=f"memory {body.memory_id} not found")
+        grant = repo.add_memory_grant(
+            sess,
+            asset_id=asset_id,
+            memory_id=body.memory_id,
+            sync_mode=body.sync_mode,
+        )
+        try:
+            sess.commit()
+        except IntegrityError as exc:
+            sess.rollback()
+            raise HTTPException(status_code=409, detail="memory is already granted to this asset") from exc
+        return grant
+    finally:
+        sess.close()
+
+
+@router.get("/assets/{asset_id}/memories")
+def list_asset_memories(asset_id: str) -> list[MemoryOut]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        _require_asset(sess, asset_id)
+        return [_record_to_out(memory) for memory in repo.list_asset_visible_memories(sess, asset_id)]
+    finally:
+        sess.close()
+
+
+@router.get("/projects")
+def list_projects() -> list[Project]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        return repo.list_projects(sess)
+    finally:
+        sess.close()
+
+
+@router.post("/projects")
+def create_project(body: CreateProjectIn) -> Project:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        if repo.get_project(sess, body.id) is not None:
+            raise HTTPException(status_code=409, detail=f"project {body.id} already exists")
+        project = repo.create_project(
+            sess,
+            project_id=body.id,
+            name=body.name,
+            workspace_id=body.workspace_id,
+            description=body.description,
+        )
+        sess.commit()
+        return project
+    finally:
+        sess.close()
+
+
+@router.get("/projects/{project_id}/assets")
+def list_project_assets(project_id: str) -> list[ProjectMembership]:
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        if repo.get_project(sess, project_id) is None:
+            raise HTTPException(status_code=404, detail=f"project {project_id} not found")
+        return repo.list_project_memberships(sess, project_id)
+    finally:
+        sess.close()
 
 
 @router.get("/memories")

@@ -128,10 +128,11 @@ def test_explain_accepts_complete_project_scope(client: TestClient) -> None:
     assert response.json()["record"]["id"] == memory["id"]
 
 
-def test_admin_ui_does_not_embed_memory_content_in_inline_handlers(
+def test_admin_ui_uses_compiled_react_bundle_without_inline_handlers(
     client: TestClient,
 ) -> None:
     html = client.get("/").text
 
     assert "onclick=" not in html
-    assert "data-memory-id=" in html
+    assert '<div id="root"></div>' in html
+    assert "/static/assets/index-" in html

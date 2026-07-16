@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -69,6 +69,66 @@ class TraceRow(Base):
     hit_reasons: Mapped[dict[str, str]] = mapped_column(JSON)
     elapsed_ms: Mapped[int] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AgentAssetRow(Base):
+    __tablename__ = "agent_assets"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role_tags: Mapped[list[str]] = mapped_column(JSON)
+    default_sync_mode: Mapped[str] = mapped_column(String(16))
+    trust_level: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AgentEndpointRow(Base):
+    __tablename__ = "agent_endpoints"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(64), index=True)
+    client_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    platform: Mapped[str] = mapped_column(String(16))
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ProjectRow(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ProjectMembershipRow(Base):
+    __tablename__ = "project_memberships"
+    __table_args__ = (UniqueConstraint("asset_id", "project_id", name="uq_asset_project"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(128), index=True)
+    role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sync_mode: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MemoryGrantRow(Base):
+    __tablename__ = "memory_grants"
+    __table_args__ = (UniqueConstraint("memory_id", "asset_id", name="uq_memory_asset_grant"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(String(64), index=True)
+    asset_id: Mapped[str] = mapped_column(String(64), index=True)
+    sync_mode: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 # Helpful indexes for common searches

@@ -18,17 +18,35 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from memory_workbench.domain.models import (
     ActorType,
+    AgentAsset,
+    AgentAssetStatus,
+    AgentEndpoint,
+    EndpointPlatform,
     EventType,
     MemoryEvent,
+    MemoryGrant,
     MemoryKind,
     MemoryRecord,
     MemoryScope,
     MemorySensitivity,
     MemoryState,
+    Project,
+    ProjectMembership,
     RetrievalTrace,
     ScopeLevel,
+    SyncMode,
+    utcnow,
 )
-from memory_workbench.storage.tables import EventRow, MemoryRow, TraceRow
+from memory_workbench.storage.tables import (
+    AgentAssetRow,
+    AgentEndpointRow,
+    EventRow,
+    MemoryGrantRow,
+    MemoryRow,
+    ProjectMembershipRow,
+    ProjectRow,
+    TraceRow,
+)
 
 _EVENT_TYPE_ORDER = {
     EventType.PROPOSED.value: 0,
@@ -84,6 +102,63 @@ def last_event_id(session: Session, memory_id: str) -> str | None:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:24]}"
+
+
+def _asset_from_row(row: AgentAssetRow) -> AgentAsset:
+    return AgentAsset(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        role_tags=row.role_tags,
+        default_sync_mode=SyncMode(row.default_sync_mode),
+        trust_level=row.trust_level,
+        status=AgentAssetStatus(row.status),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _endpoint_from_row(row: AgentEndpointRow) -> AgentEndpoint:
+    return AgentEndpoint(
+        id=row.id,
+        asset_id=row.asset_id,
+        client_id=row.client_id,
+        platform=EndpointPlatform(row.platform),
+        display_name=row.display_name,
+        status=AgentAssetStatus(row.status),
+        created_at=row.created_at,
+    )
+
+
+def _project_from_row(row: ProjectRow) -> Project:
+    return Project(
+        id=row.id,
+        name=row.name,
+        workspace_id=row.workspace_id,
+        description=row.description,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _membership_from_row(row: ProjectMembershipRow) -> ProjectMembership:
+    return ProjectMembership(
+        asset_id=row.asset_id,
+        project_id=row.project_id,
+        role=row.role,
+        sync_mode=SyncMode(row.sync_mode),
+        created_at=row.created_at,
+    )
+
+
+def _grant_from_row(row: MemoryGrantRow) -> MemoryGrant:
+    return MemoryGrant(
+        id=row.id,
+        memory_id=row.memory_id,
+        asset_id=row.asset_id,
+        sync_mode=SyncMode(row.sync_mode),
+        created_at=row.created_at,
+    )
 
 
 def _scope_to_json(scope: MemoryScope) -> dict[str, Any]:
@@ -202,6 +277,192 @@ def list_records(
         stmt = stmt.where(MemoryRow.kind == kind.value)
     rows = session.execute(stmt).scalars().all()
     return [_row_to_record(r) for r in rows]
+
+
+# --- AgentAsset control plane --------------------------------------------
+
+
+def create_agent_asset(
+    session: Session,
+    *,
+    name: str,
+    description: str | None,
+    role_tags: list[str],
+    default_sync_mode: SyncMode,
+    trust_level: str = "standard",
+) -> AgentAsset:
+    now = utcnow()
+    row = AgentAssetRow(
+        id=_new_id("asset"),
+        name=name,
+        description=description,
+        role_tags=role_tags,
+        default_sync_mode=default_sync_mode.value,
+        trust_level=trust_level,
+        status=AgentAssetStatus.ACTIVE.value,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    return _asset_from_row(row)
+
+
+def get_agent_asset(session: Session, asset_id: str) -> AgentAsset | None:
+    row = session.get(AgentAssetRow, asset_id)
+    return _asset_from_row(row) if row else None
+
+
+def list_agent_assets(session: Session) -> list[AgentAsset]:
+    rows = session.execute(
+        select(AgentAssetRow).order_by(AgentAssetRow.updated_at.desc(), AgentAssetRow.id)
+    ).scalars().all()
+    return [_asset_from_row(row) for row in rows]
+
+
+def create_project(
+    session: Session,
+    *,
+    project_id: str,
+    name: str,
+    workspace_id: str | None,
+    description: str | None,
+) -> Project:
+    now = utcnow()
+    row = ProjectRow(
+        id=project_id,
+        name=name,
+        workspace_id=workspace_id,
+        description=description,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    return _project_from_row(row)
+
+
+def get_project(session: Session, project_id: str) -> Project | None:
+    row = session.get(ProjectRow, project_id)
+    return _project_from_row(row) if row else None
+
+
+def list_projects(session: Session) -> list[Project]:
+    rows = session.execute(select(ProjectRow).order_by(ProjectRow.name, ProjectRow.id)).scalars().all()
+    return [_project_from_row(row) for row in rows]
+
+
+def add_project_membership(
+    session: Session,
+    *,
+    asset_id: str,
+    project_id: str,
+    role: str | None,
+    sync_mode: SyncMode,
+) -> ProjectMembership:
+    row = ProjectMembershipRow(
+        asset_id=asset_id,
+        project_id=project_id,
+        role=role,
+        sync_mode=sync_mode.value,
+        created_at=utcnow(),
+    )
+    session.add(row)
+    return _membership_from_row(row)
+
+
+def list_asset_memberships(session: Session, asset_id: str) -> list[ProjectMembership]:
+    rows = session.execute(
+        select(ProjectMembershipRow)
+        .where(ProjectMembershipRow.asset_id == asset_id)
+        .order_by(ProjectMembershipRow.created_at, ProjectMembershipRow.project_id)
+    ).scalars().all()
+    return [_membership_from_row(row) for row in rows]
+
+
+def list_project_memberships(session: Session, project_id: str) -> list[ProjectMembership]:
+    rows = session.execute(
+        select(ProjectMembershipRow)
+        .where(ProjectMembershipRow.project_id == project_id)
+        .order_by(ProjectMembershipRow.created_at, ProjectMembershipRow.asset_id)
+    ).scalars().all()
+    return [_membership_from_row(row) for row in rows]
+
+
+def add_agent_endpoint(
+    session: Session,
+    *,
+    asset_id: str,
+    client_id: str,
+    platform: EndpointPlatform,
+    display_name: str | None,
+) -> AgentEndpoint:
+    row = AgentEndpointRow(
+        id=_new_id("endpoint"),
+        asset_id=asset_id,
+        client_id=client_id,
+        platform=platform.value,
+        display_name=display_name,
+        status=AgentAssetStatus.ACTIVE.value,
+        created_at=utcnow(),
+    )
+    session.add(row)
+    return _endpoint_from_row(row)
+
+
+def list_asset_endpoints(session: Session, asset_id: str) -> list[AgentEndpoint]:
+    rows = session.execute(
+        select(AgentEndpointRow)
+        .where(AgentEndpointRow.asset_id == asset_id)
+        .order_by(AgentEndpointRow.created_at, AgentEndpointRow.id)
+    ).scalars().all()
+    return [_endpoint_from_row(row) for row in rows]
+
+
+def add_memory_grant(
+    session: Session,
+    *,
+    asset_id: str,
+    memory_id: str,
+    sync_mode: SyncMode,
+) -> MemoryGrant:
+    row = MemoryGrantRow(
+        id=_new_id("grant"),
+        memory_id=memory_id,
+        asset_id=asset_id,
+        sync_mode=sync_mode.value,
+        created_at=utcnow(),
+    )
+    session.add(row)
+    return _grant_from_row(row)
+
+
+def list_asset_grants(session: Session, asset_id: str) -> list[MemoryGrant]:
+    rows = session.execute(
+        select(MemoryGrantRow)
+        .where(MemoryGrantRow.asset_id == asset_id)
+        .order_by(MemoryGrantRow.created_at, MemoryGrantRow.id)
+    ).scalars().all()
+    return [_grant_from_row(row) for row in rows]
+
+
+def list_asset_visible_memories(session: Session, asset_id: str) -> list[MemoryRecord]:
+    """Compute visibility from grants and memberships; never duplicate memory rows."""
+    memberships = list_asset_memberships(session, asset_id)
+    project_ids = {membership.project_id for membership in memberships}
+    projects = [get_project(session, project_id) for project_id in project_ids]
+    workspace_ids = {project.workspace_id for project in projects if project and project.workspace_id}
+    granted_ids = {grant.memory_id for grant in list_asset_grants(session, asset_id)}
+    rows = session.execute(
+        select_search_query(include_inactive=False, at=utcnow())
+    ).scalars().all()
+
+    visible: list[MemoryRecord] = []
+    for row in rows:
+        record = _row_to_record(row)
+        scope = record.scope
+        if record.id in granted_ids or scope.level == ScopeLevel.GLOBAL or (scope.level == ScopeLevel.WORKSPACE and scope.workspace_id in workspace_ids) or (scope.level == ScopeLevel.PROJECT and scope.project_id in project_ids) or (scope.level == ScopeLevel.AGENT and scope.agent_id == asset_id):
+            visible.append(record)
+
+    return sorted(visible, key=lambda record: (-record.updated_at.timestamp(), record.id))
 
 
 def list_events(session: Session, memory_id: str) -> list[MemoryEvent]:

@@ -24,6 +24,7 @@ First run creates `./memory_workbench.db` (SQLite). Bound to 127.0.0.1 only.
 - [Technical architecture](docs/technical-architecture.md)
 - [MVP specification](docs/spec.md)
 - [Documentation maintenance](docs/maintenance.md)
+- [Agent assets and memory routing](docs/agent-assets.md)
 
 ## Tracer-bullet chain
 
@@ -43,8 +44,9 @@ src/memory_workbench/
   api/           # FastAPI HTTP routes
   mcp/           # MCP tools (propose, search, correct)
   tracing/       # RetrievalTrace recorder
-  static/        # minimal Web UI
+  static/        # production build output for the Web UI
   main.py        # uvicorn entry
+frontend/        # React + TypeScript + Vite management UI
 tests/
   test_tracer.py       # end-to-end chain test
   test_api.py          # HTTP integration and UI security contracts
@@ -55,7 +57,8 @@ docs/                  # product, technical and usage documentation
 ## Current limitations
 
 - Search is deterministic substring matching, not FTS5 yet.
-- The Web UI is bundled HTML/JavaScript, not the target React/TypeScript app.
+- The React + TypeScript UI must be built with `cd frontend && npm run build`
+  before FastAPI serves the latest production bundle.
 - MCP tools exist, but a packaged `memory-workbench-mcp` entry point is not available yet.
 - Database initialization uses `create_all`; Alembic migrations are not implemented yet.
 
