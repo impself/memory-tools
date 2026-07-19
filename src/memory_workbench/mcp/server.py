@@ -7,8 +7,8 @@ forget.
 
 Cross-tool onboarding (plan §1): caller identity resolves from MW_CLIENT_ID
 environment. Tool argument `client_id` is backward-compat only and must match
-the env value when both are present. Each successful or failed tool call
-records a redacted endpoint observation so the UI can show activity status.
+the env value when both are present. Each successful tool call records a
+redacted endpoint observation so the UI can show activity status.
 """
 
 from __future__ import annotations
@@ -22,14 +22,7 @@ from mcp.server.fastmcp import FastMCP
 from memory_workbench.api.deps import session_dep
 from memory_workbench.api.errors import to_mcp
 from memory_workbench.domain import service
-from memory_workbench.domain.errors import (
-    InvalidTransition,
-    MemoryError,
-    MemoryNotFound,
-    ScopeViolation,
-    SecretContent,
-    ValidationError,
-)
+from memory_workbench.domain.errors import MemoryError
 from memory_workbench.domain.models import (
     CallerContext,
     MemoryKind,
@@ -69,32 +62,13 @@ def _err(exc: Exception) -> str:
     return json.dumps(to_mcp(exc))
 
 
-_ERROR_CATEGORIES = {
-    MemoryNotFound: "not_found",
-    ScopeViolation: "scope",
-    SecretContent: "secret_refused",
-    InvalidTransition: "invalid_transition",
-    ValidationError: "validation",
-}
-
-
-def _categorize_error(exc: Exception) -> str:
-    if isinstance(exc, MemoryError):
-        for cls, category in _ERROR_CATEGORIES.items():
-            if isinstance(exc, cls):
-                return category
-        return "internal"
-    return "internal"
-
-
 def _record_activity(
     sess: Any,
     *,
     runtime_client_id: str,
     operation: str,
-    exc: Exception | None,
 ) -> None:
-    """Best-effort observation write. Never raises; never stores content.
+    """Record successful endpoint activity without storing request content.
 
     Skipped silently when the caller is unbound (no MW_CLIENT_ID and no
     argument) so the existing dev/manual flow is unaffected.
@@ -104,12 +78,10 @@ def _record_activity(
     endpoint = repo.get_endpoint_for_client_id(sess, runtime_client_id)
     if endpoint is None:
         return
-    error_category = _categorize_error(exc) if exc else None
     repo.record_endpoint_observation(
         sess,
         endpoint_id=endpoint.id,
         operation=operation,
-        error_category=error_category,
     )
 
 
@@ -183,10 +155,8 @@ def memory_propose(
             rec = service.propose(sess, ctx, inp)
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="propose", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="propose", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="propose")
         sess.commit()
         return _ok(
             {
@@ -245,10 +215,8 @@ def memory_search(
             )
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="search", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="search", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="search")
         sess.commit()
         return _ok(
             {
@@ -299,10 +267,8 @@ def memory_get(
             data = service.explain(sess, ctx, memory_id)
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="get", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="get", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="get")
         sess.commit()
         return _ok(data)
     finally:
@@ -342,10 +308,8 @@ def memory_correct(
             rec = service.correct(sess, ctx, inp)
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="correct", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="correct", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="correct")
         sess.commit()
         return _ok(
             {
@@ -394,10 +358,8 @@ def memory_forget(
             )
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="forget", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="forget", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="forget")
         sess.commit()
         return _ok({"memory_id": memory_id, "state": rec.state.value})
     finally:
@@ -431,10 +393,8 @@ def memory_explain(
             data = service.explain(sess, ctx, memory_id)
         except Exception as exc:
             sess.rollback()
-            _record_activity(sess, runtime_client_id=resolved, operation="explain", exc=exc)
-            sess.commit()
             return _err(exc)
-        _record_activity(sess, runtime_client_id=resolved, operation="explain", exc=None)
+        _record_activity(sess, runtime_client_id=resolved, operation="explain")
         sess.commit()
         return _ok(data)
     finally:

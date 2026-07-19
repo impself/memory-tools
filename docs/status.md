@@ -25,7 +25,7 @@
 - `memory-workbench-mcp` console script 已注册（`mcp/entrypoint.py`），只启动 stdio server，不启动 Uvicorn。
 - 纯函数 MCP 配置渲染器（Codex / Claude / Cursor；installed 与 repository profile）。
 - 端点 observation 表（`endpoint_observations`），状态派生为 `never_seen | active | stale`（24h 阈值）。
-- MCP 工具调用后写入脱敏 observation；从不存查询文本或记忆正文。
+- 仅成功的 MCP 工具调用写入脱敏 observation；从不存查询文本或记忆正文。
 - `MW_CLIENT_ID` 是权威 caller 标识；工具参数与之一致或冲突被拒绝。
 - HTTP `GET /endpoints/{id}/status` 与 `POST /endpoints/{id}/setup`；AssetDetailOut 包含端点状态字段。
 - React 端点卡片 + setup drawer，支持 Copy 与 Download，不自动写入 IDE 配置。
@@ -35,7 +35,7 @@
 
 | 能力 | 当前状态 | 缺口 |
 |---|---|---|
-| MCP 接入 | console script + 渲染器 + observation | 仍无 stdio 子进程集成测试；未做 Codex/Cursor/Claude 真实安装验证 |
+| MCP 接入 | console script + 渲染器 + observation + stdio 启动 smoke test | 未做 Codex/Cursor/Claude 真实安装验证 |
 | Web 管理 | React UI 覆盖资产、端点、项目、记忆路由 | 缺 Inbox/Conflicts/Settings 完整视图；端点 setup 无 Vitest/Playwright |
 | 检索 | scope、状态、有效期、子串匹配、稳定排序 | 尚无 SQLite FTS5、token budget 和 10k 数据性能验证 |
 | 冲突处理 | Repository 有结构化匹配基础 | 尚无冲突审议流程与页面 |
@@ -89,5 +89,5 @@ The 0.2.x milestone adds:
   generated JSON as text and offers Copy / Download. The UI never writes
   IDE config files automatically.
 
-Still deferred: stdio integration tests, real two-client install
-verification, Alembic migration for the new table, and FTS5 search.
+Still deferred: real two-client install verification, Alembic migration for
+the new table, and FTS5 search.

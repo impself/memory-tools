@@ -7,8 +7,10 @@ import json
 
 import pytest
 
-from memory_workbench.api.deps import reset_for_tests
-from memory_workbench.mcp.server import memory_propose, memory_search
+from memory_workbench.api.deps import reset_for_tests, session_dep
+from memory_workbench.domain.models import EndpointPlatform, SyncMode
+from memory_workbench.mcp.server import memory_get, memory_propose, memory_search
+from memory_workbench.storage import repository as repo
 
 
 def test_agent_proposal_cannot_request_approval() -> None:
@@ -86,3 +88,45 @@ def test_missing_client_id_falls_back_to_anonymous(clean_db, monkeypatch) -> Non
         )
     )
     assert result["state"] == "candidate"
+
+
+def test_failed_mcp_call_does_not_mark_endpoint_active(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only successful MCP operations count toward endpoint activity status."""
+    reset_for_tests(":memory:")
+    monkeypatch.setenv("MW_CLIENT_ID", "contract-client")
+    sess = session_dep()
+    try:
+        asset = repo.create_agent_asset(
+            sess,
+            name="Contract client",
+            description=None,
+            role_tags=[],
+            default_sync_mode=SyncMode.MANUAL,
+        )
+        endpoint = repo.add_agent_endpoint(
+            sess,
+            asset_id=asset.id,
+            client_id="contract-client",
+            platform=EndpointPlatform.CODEX,
+            display_name=None,
+        )
+        sess.commit()
+        endpoint_id = endpoint.id
+    finally:
+        sess.close()
+
+    result = json.loads(
+        memory_get(
+            memory_id="missing-memory",
+            level="project",
+            project_id="demo",
+        )
+    )
+
+    assert result["error"]["code"] == "NOT_FOUND"
+
+    sess = session_dep()
+    try:
+        assert repo.get_endpoint_observation(sess, endpoint_id) is None
+    finally:
+        sess.close()

@@ -25,6 +25,8 @@ memory-workbench-mcp
 
 `memory-workbench-mcp` 只启动 stdio MCP server，不会启动 FastAPI / Uvicorn。
 
+在仓库根目录运行 `make mcp-check` 会同时确认 console script 已注册，并启动一次短暂的 stdio server smoke test。
+
 ### 仓库内开发命令
 
 ```bash

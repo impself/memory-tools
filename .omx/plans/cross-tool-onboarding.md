@@ -1,6 +1,6 @@
 # Cross-Tool MCP Onboarding Plan
 
-Status: proposed
+Status: implemented in code; pending real-client release validation
 Date: 2026-07-19
 Scope: make the existing AgentAsset memory-routing model usable from installed
 Codex, Claude, and Cursor clients. Security Lab, remote service hosting,
@@ -36,8 +36,8 @@ automatic prompt injection, and delivery receipts remain out of scope.
    client configuration paths is a later, explicitly confirmed operation.
 3. Implement status from a new endpoint-observation table or an endpoint
    activity projection populated by every successful MCP tool call. Store
-   `last_seen_at`, `last_operation`, and a redacted error category; derive
-   `configured`, `active` (seen within 24h), and `stale` statuses. Do not claim
+   `last_seen_at` and `last_operation`; derive `never_seen`, `active` (seen
+   within 24h), and `stale` statuses. Failed calls never refresh activity. Do not claim
    `healthy` merely because a local HTTP route is alive.
 4. Add state in a new table rather than new columns on `agent_endpoints`, so
    the current `Base.metadata.create_all()` setup can upgrade existing local
@@ -103,14 +103,14 @@ Files: `src/memory_workbench/storage/tables.py`,
 `src/memory_workbench/storage/repository.py`,
 `src/memory_workbench/api/routes.py`, `tests/test_agent_assets.py`.
 
-- Add `EndpointObservationRow` keyed by endpoint id. Upsert the latest
-  activity with operation and timestamp; keep a bounded, redacted recent-error
-  field only if an operation fails after context resolution.
+- Add `EndpointObservationRow` keyed by endpoint id. Upsert successful
+  activity with operation and timestamp. Failed calls do not refresh it, so an
+  endpoint cannot appear active solely because of repeated errors.
 - Add repository queries that resolve endpoint by client id, attach the newest
-  observation, and compute `configured | active | stale | never_seen` without
+  observation, and compute `never_seen | active | stale` without
   querying a client process.
 - Extend `AssetDetailOut.endpoints` with status fields and add
-  `GET /api/assets/{asset_id}/endpoints/{endpoint_id}/setup` to return a
+  `POST /api/assets/{asset_id}/endpoints/{endpoint_id}/setup` to return a
   selected renderer payload. Validate that the endpoint belongs to the asset.
 - Add `GET /api/assets/{asset_id}/endpoints/{endpoint_id}/status`; it returns
   the derived status, last seen time, last operation, and effective memory

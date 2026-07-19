@@ -32,18 +32,19 @@ run: ## Start the local FastAPI application
 mcp: ## Start the packaged stdio MCP server (no HTTP)
 	uv run memory-workbench-mcp
 
-mcp-check: ## Verify the MCP console script resolves and reports its entry point
+mcp-check: ## Verify the MCP console script is registered and starts a stdio server
 	@uv run python -c "from importlib.metadata import entry_points; \
 	names = [e.name for e in entry_points(group='console_scripts') if 'memory-workbench' in e.name]; \
 	print('console scripts:', ', '.join(names)); \
 	assert 'memory-workbench-mcp' in names, 'memory-workbench-mcp not registered'; \
 	print('OK')"
+	uv run pytest tests/test_mcp_entrypoint.py -q
 
 release-checklist: ## Print the manual two-client release checklist (docs/mcp-client-guide.md)
 	@echo "Manual release checklist (see docs/mcp-client-guide.md for full steps):"
 	@echo "  1. make install && make frontend-build"
 	@echo "  2. make check     # pytest + ruff + mypy + frontend build"
-	@echo "  3. make mcp-check # console script registered"
+	@echo "  3. make mcp-check # console script registered and stdio smoke-tested"
 	@echo "  4. uv tool install memory-workbench --force in a temp env"
 	@echo "  5. Run memory-workbench-mcp with MW_CLIENT_ID=codex-local"
 	@echo "  6. Run memory-workbench (Web UI) and bind a second client endpoint"
