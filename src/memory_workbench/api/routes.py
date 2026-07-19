@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
+from memory_workbench.api.errors import to_http
 from memory_workbench.domain import service
+from memory_workbench.domain.errors import ValidationError
 from memory_workbench.domain.models import (
     AgentAsset,
     AgentEndpoint,
     CallerContext,
     EndpointPlatform,
+    EndpointStatus,
     MemoryGrant,
     MemoryKind,
     MemoryRecord,
@@ -25,6 +29,7 @@ from memory_workbench.domain.models import (
     ScopeLevel,
     SyncMode,
 )
+from memory_workbench.mcp.config import RenderInputs, render
 from memory_workbench.storage import repository as repo
 
 # --- request/response schemas -------------------------------------------
@@ -168,8 +173,38 @@ class AddMemoryGrantIn(StrictRequest):
     sync_mode: SyncMode = SyncMode.MANUAL
 
 
+class EndpointStatusOut(BaseModel):
+    """Activity-derived endpoint status payload."""
+
+    endpoint_id: str
+    asset_id: str
+    client_id: str
+    platform: EndpointPlatform
+    status: EndpointStatus
+    last_seen_at: datetime | None
+    last_operation: str | None
+    last_error_category: str | None
+    visible_memory_count: int
+
+
+class EndpointSetupIn(StrictRequest):
+    """Body for POST /endpoints/{id}/setup. Optional path overrides."""
+
+    profile: Literal["installed", "repository"] = "installed"
+    repository_path: str | None = None
+    db_path: str | None = None
+
+
+class EndpointSetupOut(BaseModel):
+    endpoint_id: str
+    client_id: str
+    platform: EndpointPlatform
+    profile: Literal["installed", "repository"]
+    config: dict[str, Any]
+
+
 class AssetDetailOut(AgentAsset):
-    endpoints: list[AgentEndpoint]
+    endpoints: list[EndpointStatusOut]
     projects: list[ProjectMembership]
     grants: list[MemoryGrant]
     memories: list[MemoryOut]
@@ -211,9 +246,12 @@ def _record_to_out(rec: MemoryRecord) -> MemoryOut:
 
 def _asset_detail(session: Any, asset: AgentAsset) -> AssetDetailOut:
     memories = repo.list_asset_visible_memories(session, asset.id)
+    endpoints = [
+        _endpoint_status_out(session, e) for e in repo.list_asset_endpoints(session, asset.id)
+    ]
     return AssetDetailOut(
         **asset.model_dump(),
-        endpoints=repo.list_asset_endpoints(session, asset.id),
+        endpoints=endpoints,
         projects=repo.list_asset_memberships(session, asset.id),
         grants=repo.list_asset_grants(session, asset.id),
         memories=[_record_to_out(memory) for memory in memories],
@@ -226,6 +264,33 @@ def _require_asset(session: Any, asset_id: str) -> AgentAsset:
     if asset is None:
         raise HTTPException(status_code=404, detail=f"agent asset {asset_id} not found")
     return asset
+
+
+def _endpoint_status_out(session: Any, endpoint: AgentEndpoint) -> EndpointStatusOut:
+    status = repo.derive_endpoint_status(session, endpoint.id)
+    obs = repo.get_endpoint_observation(session, endpoint.id)
+    memories = repo.list_asset_visible_memories(session, endpoint.asset_id)
+    return EndpointStatusOut(
+        endpoint_id=endpoint.id,
+        asset_id=endpoint.asset_id,
+        client_id=endpoint.client_id,
+        platform=endpoint.platform,
+        status=status,
+        last_seen_at=obs.last_seen_at if obs else None,
+        last_operation=obs.last_operation if obs else None,
+        last_error_category=obs.last_error_category if obs else None,
+        visible_memory_count=len(memories),
+    )
+
+
+def _require_endpoint(session: Any, asset_id: str, endpoint_id: str) -> AgentEndpoint:
+    endpoint = repo.get_endpoint(session, endpoint_id)
+    if endpoint is None or endpoint.asset_id != asset_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"endpoint {endpoint_id} not found on asset {asset_id}",
+        )
+    return endpoint
 
 
 @router.get("/health")
@@ -297,6 +362,66 @@ def add_asset_endpoint(asset_id: str, body: AddEndpointIn) -> AgentEndpoint:
                 detail=f"client_id {body.client_id!r} is already bound to an agent asset",
             ) from exc
         return endpoint
+    finally:
+        sess.close()
+
+
+@router.get("/assets/{asset_id}/endpoints/{endpoint_id}/status")
+def get_endpoint_status(asset_id: str, endpoint_id: str) -> EndpointStatusOut:
+    """Activity-derived status. Never pings the client process.
+
+    Returns never_seen | active | stale based on the latest recorded
+    observation, plus the redacted last operation and effective memory count.
+    """
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        endpoint = _require_endpoint(sess, asset_id, endpoint_id)
+        return _endpoint_status_out(sess, endpoint)
+    finally:
+        sess.close()
+
+
+@router.post("/assets/{asset_id}/endpoints/{endpoint_id}/setup")
+def render_endpoint_setup(
+    asset_id: str, endpoint_id: str, body: EndpointSetupIn
+) -> EndpointSetupOut:
+    """Render paste-ready MCP configuration for this endpoint.
+
+    The response is plain JSON. The UI shows it as text and offers Copy/Download;
+    no automatic writes to client config files.
+    """
+    from memory_workbench.api.deps import session_dep
+
+    sess = session_dep()
+    try:
+        endpoint = _require_endpoint(sess, asset_id, endpoint_id)
+        try:
+            repo_path_arg = Path(body.repository_path) if body.repository_path else None
+            db_path_arg = Path(body.db_path) if body.db_path else None
+            # Reject relative inputs before resolve() silently absolutizes them.
+            if repo_path_arg is not None and not repo_path_arg.is_absolute():
+                raise ValidationError("repository_path must be absolute")
+            if db_path_arg is not None and not db_path_arg.is_absolute():
+                raise ValidationError("db_path must be absolute")
+            inputs = RenderInputs(
+                client_id=endpoint.client_id,
+                platform=endpoint.platform,
+                profile=body.profile,
+                repository_path=repo_path_arg,
+                db_path=db_path_arg,
+            )
+            payload = render(endpoint.platform, inputs)
+        except ValidationError as exc:
+            raise to_http(exc) from exc
+        return EndpointSetupOut(
+            endpoint_id=endpoint.id,
+            client_id=endpoint.client_id,
+            platform=endpoint.platform,
+            profile=body.profile,
+            config=payload,
+        )
     finally:
         sess.close()
 
