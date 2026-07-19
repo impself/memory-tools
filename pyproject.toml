@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 memory-workbench = "memory_workbench.main:run"
+memory-workbench-mcp = "memory_workbench.mcp.entrypoint:run"
 
 [project.optional-dependencies]
 dev = [
