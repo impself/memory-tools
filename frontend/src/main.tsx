@@ -1,11 +1,30 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "./api";
-import type { Asset, Memory, Project, SyncMode } from "./types";
+import type {
+  Asset,
+  Endpoint,
+  EndpointSetupResponse,
+  EndpointStatus,
+  LaunchProfile,
+  Memory,
+  Project,
+  SyncMode,
+} from "./types";
 import "./styles.css";
 
 type Notice = { tone: "error" | "ok"; text: string } | null;
 const syncLabel: Record<SyncMode, string> = { manual: "手动同步", automatic: "自动同步" };
+const statusLabel: Record<EndpointStatus, string> = {
+  never_seen: "未观测",
+  active: "近 24 小时活跃",
+  stale: "超过 24 小时未观测",
+};
+const statusHint: Record<EndpointStatus, string> = {
+  never_seen: "端点已绑定，但还没有任何 MCP 工具调用过它。",
+  active: "最近 24 小时内有成功的 MCP 调用。",
+  stale: "最后一次调用已经超过 24 小时，请确认客户端仍在使用。",
+};
 
 function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -54,8 +73,99 @@ function AssetLedger({ asset, projects, selectedProjectId, onSelectProject, onAc
   const availableProjects = projects.filter((project) => !asset.projects.some((membership) => membership.project_id === project.id));
   return <><article className="asset-hero"><p className="eyebrow">{asset.status} / {syncLabel[asset.default_sync_mode]}</p><h3>{asset.name}</h3><p>{asset.description || "这是一个稳定的逻辑身份；工具安装和会话不会改变它。"}</p><div className="chip-row">{asset.role_tags.map((tag) => <span key={tag}>{tag}</span>)}</div></article>
     <section className="ledger-block"><h4>项目归属 <i>{asset.projects.length}</i></h4><div className="rows">{asset.projects.map((membership) => <button className={`row project-row ${selectedProjectId === membership.project_id ? "chosen" : ""}`} onClick={() => onSelectProject(selectedProjectId === membership.project_id ? null : membership.project_id)} key={membership.project_id}><b>{membership.project_id}</b><span>{membership.role || "成员"}</span><em>{syncLabel[membership.sync_mode]}</em></button>)}</div><div className="inline-form"><select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">关联已有项目…</option>{availableProjects.map((project) => <option key={project.id} value={project.id}>{project.name} / {project.id}</option>)}</select><button disabled={!projectId} onClick={() => { onAct(() => api.addProject(asset.id, { project_id: projectId, sync_mode: "manual" }), "项目已关联"); setProjectId(""); }}>关联</button></div><ProjectForm onSubmit={(body) => onAct(async () => { const project = await api.createProject(body); await api.addProject(asset.id, { project_id: project.id, sync_mode: "manual" }); onSelectProject(project.id); }, "项目已创建并关联")} /></section>
-    <section className="ledger-block"><h4>工具端点 <i>{asset.endpoints.length}</i></h4><div className="rows">{asset.endpoints.map((endpoint) => <div className="row" key={endpoint.id}><b>{endpoint.platform}</b><span>{endpoint.display_name || endpoint.client_id}</span><em>{endpoint.client_id}</em></div>)}</div>{asset.endpoints.length === 0 && <Empty text="尚未绑定 Cursor、Codex 或 Claude 端点。" />}<EndpointForm onSubmit={(body) => onAct(() => api.addEndpoint(asset.id, body), "端点已绑定到资产")} /><p className="hint">已绑定端点的检索会使用该资产的有效记忆集。</p></section>
+    <section className="ledger-block"><h4>工具端点 <i>{asset.endpoints.length}</i></h4><div className="rows">{asset.endpoints.map((endpoint) => <EndpointCard key={endpoint.endpoint_id} endpoint={endpoint} assetId={asset.id} onAct={onAct} />)}</div>{asset.endpoints.length === 0 && <Empty text="尚未绑定 Cursor、Codex 或 Claude 端点。" />}<EndpointForm onSubmit={(body) => onAct(() => api.addEndpoint(asset.id, body), "端点已绑定到资产")} /><p className="hint">已绑定端点的检索会使用该资产的有效记忆集。</p></section>
   </>;
+}
+
+function EndpointCard({ endpoint, assetId, onAct }: { endpoint: Endpoint; assetId: string; onAct: (action: () => Promise<unknown>, success: string) => void }) {
+  const [drawer, setDrawer] = useState<EndpointSetupResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<LaunchProfile>("installed");
+  const [repositoryPath, setRepositoryPath] = useState("");
+  const [dbPath, setDbPath] = useState("");
+
+  const open = async () => {
+    setError(null);
+    try {
+      const payload = await api.endpointSetup(assetId, endpoint.endpoint_id, {
+        profile,
+        repository_path: repositoryPath || undefined,
+        db_path: dbPath || undefined,
+      });
+      setDrawer(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法生成配置");
+    }
+  };
+  const close = () => { setDrawer(null); setError(null); };
+  const copy = async () => {
+    if (!drawer) return;
+    await navigator.clipboard.writeText(JSON.stringify(drawer.config, null, 2));
+    onAct(async () => Promise.resolve(), "配置已复制到剪贴板");
+  };
+  const download = () => {
+    if (!drawer) return;
+    const blob = new Blob([JSON.stringify(drawer.config, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `mcp-${endpoint.platform}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className={`row endpoint-row status-${endpoint.status}`}>
+      <header>
+        <b>{endpoint.platform}</b>
+        <span>{endpoint.client_id}</span>
+        <em className={`status-pill ${endpoint.status}`} title={statusHint[endpoint.status]}>{statusLabel[endpoint.status]}</em>
+      </header>
+      <dl className="endpoint-meta">
+        <dt>最近调用</dt><dd>{endpoint.last_operation ?? "—"}</dd>
+        <dt>最近时间</dt><dd>{endpoint.last_seen_at ? new Date(endpoint.last_seen_at).toLocaleString() : "—"}</dd>
+        <dt>可见记忆</dt><dd>{endpoint.visible_memory_count}</dd>
+        {endpoint.last_error_category && <><dt>错误类别</dt><dd>{endpoint.last_error_category}</dd></>}
+      </dl>
+      <p className="status-hint">{statusHint[endpoint.status]}</p>
+      <div className="endpoint-actions">
+        <select value={profile} onChange={(e) => setProfile(e.target.value as LaunchProfile)}>
+          <option value="installed">已安装命令</option>
+          <option value="repository">仓库内运行 (uv)</option>
+        </select>
+        {profile === "repository" && (
+          <input
+            value={repositoryPath}
+            onChange={(e) => setRepositoryPath(e.target.value)}
+            placeholder="仓库绝对路径"
+          />
+        )}
+        <input
+          value={dbPath}
+          onChange={(e) => setDbPath(e.target.value)}
+          placeholder="可选：MW_DB_PATH 绝对路径"
+        />
+        <button onClick={open}>生成配置</button>
+      </div>
+      {error && <p className="inline-error">{error}</p>}
+      {drawer && (
+        <div className="setup-drawer" role="dialog" aria-label="MCP setup">
+          <header>
+            <strong>{drawer.platform} 配置片段</strong>
+            <button onClick={close} aria-label="关闭">×</button>
+          </header>
+          <pre className="setup-json">{JSON.stringify(drawer.config, null, 2)}</pre>
+          <footer>
+            <small>将片段粘贴到客户端配置文件前，请确认目标路径。本工具不会自动写入任何 IDE 配置。</small>
+            <div>
+              <button onClick={copy}>复制 JSON</button>
+              <button onClick={download}>下载</button>
+            </div>
+          </footer>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ProjectForm({ onSubmit }: { onSubmit: (body: { id: string; name: string }) => void }) { const [name, setName] = useState(""); const [id, setId] = useState(""); return <form className="project-form" onSubmit={(event) => { event.preventDefault(); if (name && id) { onSubmit({ name, id }); setName(""); setId(""); } }}><input value={name} onChange={(event) => setName(event.target.value)} placeholder="新项目名称" /><input value={id} onChange={(event) => setId(event.target.value)} placeholder="project-id" /><button type="submit">新建并关联</button></form>; }
