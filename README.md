@@ -2,8 +2,10 @@
 
 Local-first Agent Memory Control Plane. Event-ledger truth source, MCP-exposed, Web UI for management.
 
-Status: runnable tracer-bullet. Core lifecycle, scope isolation, HTTP/MCP adapters,
-retrieval traces and projection replay are implemented and tested. Not production-ready.
+Status: cross-tool onboarding milestone. Core lifecycle, scope isolation,
+HTTP/MCP adapters, retrieval traces, projection replay, AgentAsset routing,
+packaged `memory-workbench-mcp`, and endpoint activity status are implemented
+and tested. Not production-ready.
 
 ## Quick Start
 
@@ -14,6 +16,18 @@ uv run memory-workbench
 ```
 
 First run creates `./memory_workbench.db` (SQLite). Bound to 127.0.0.1 only.
+
+## MCP for installed clients
+
+```bash
+uv tool install memory-workbench
+memory-workbench-mcp                          # stdio server only
+```
+
+Configure each MCP client (Codex / Claude / Cursor) via the Web UI: create
+an AgentAsset, add an endpoint, then click **生成配置** to copy or download
+the paste-ready JSON. The client's authoritative identity comes from
+`MW_CLIENT_ID`; tool-argument `client_id` must match it when both are set.
 
 ## Documentation
 
@@ -40,18 +54,15 @@ First run creates `./memory_workbench.db` (SQLite). Bound to 127.0.0.1 only.
 ```
 src/memory_workbench/
   domain/        # models, state machine, service
-  storage/       # SQLite event log + projection
+  storage/       # SQLite event log + projection + endpoint observations
   api/           # FastAPI HTTP routes
-  mcp/           # MCP tools (propose, search, correct)
+  mcp/           # MCP tools + runtime identity + config renderers + entrypoint
   tracing/       # RetrievalTrace recorder
   static/        # production build output for the Web UI
   main.py        # uvicorn entry
 frontend/        # React + TypeScript + Vite management UI
-tests/
-  test_tracer.py       # end-to-end chain test
-  test_api.py          # HTTP integration and UI security contracts
-  test_mcp_contract.py # MCP privilege boundary
-docs/                  # product, technical and usage documentation
+tests/           # pytest (domain, api, mcp contract, agent assets, endpoint setup)
+docs/            # product, technical and usage documentation
 ```
 
 ## Current limitations
@@ -59,7 +70,17 @@ docs/                  # product, technical and usage documentation
 - Search is deterministic substring matching, not FTS5 yet.
 - The React + TypeScript UI must be built with `cd frontend && npm run build`
   before FastAPI serves the latest production bundle.
-- MCP tools exist, but a packaged `memory-workbench-mcp` entry point is not available yet.
 - Database initialization uses `create_all`; Alembic migrations are not implemented yet.
+- Endpoint status derives from local MCP observations only — no network ping.
 
 See [docs/status.md](docs/status.md) for the maintained progress report.
+
+## Development commands
+
+```bash
+make install          # uv sync --extra dev
+make check            # test + lint + typecheck + frontend build
+make mcp-check        # verify memory-workbench-mcp console script is registered
+make mcp              # run the stdio MCP server locally
+make release-checklist # print the manual two-client release steps
+```

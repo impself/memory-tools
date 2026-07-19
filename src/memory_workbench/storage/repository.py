@@ -17,11 +17,11 @@ from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from memory_workbench.domain.models import (
+    ENDPOINT_STALE_THRESHOLD_HOURS,
     ActorType,
     AgentAsset,
     AgentAssetStatus,
     AgentEndpoint,
-    ENDPOINT_STALE_THRESHOLD_HOURS,
     EndpointObservation,
     EndpointPlatform,
     EndpointStatus,

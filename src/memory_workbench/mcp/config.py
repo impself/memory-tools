@@ -22,7 +22,6 @@ from typing import Any, Literal
 from memory_workbench.domain.errors import ValidationError
 from memory_workbench.domain.models import EndpointPlatform
 
-
 LaunchProfile = Literal["installed", "repository"]
 _MCP_SERVER_NAME = "memory-workbench"
 

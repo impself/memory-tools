@@ -17,7 +17,6 @@ from dataclasses import dataclass
 
 from memory_workbench.domain.errors import ClientMismatch
 
-
 ENV_CLIENT_ID = "MW_CLIENT_ID"
 
 

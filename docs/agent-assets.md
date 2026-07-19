@@ -62,6 +62,8 @@ assets.
 - `GET` / `POST` `/api/assets`
 - `GET` `/api/assets/{asset_id}`
 - `POST` `/api/assets/{asset_id}/endpoints`
+- `GET` `/api/assets/{asset_id}/endpoints/{endpoint_id}/status`
+- `POST` `/api/assets/{asset_id}/endpoints/{endpoint_id}/setup`
 - `POST` `/api/assets/{asset_id}/projects`
 - `GET` `/api/assets/{asset_id}/memories`
 - `POST` / `DELETE` `/api/assets/{asset_id}/grants`
@@ -70,6 +72,24 @@ assets.
 
 The current endpoints are local-admin endpoints. They are intentionally not an
 agent self-service permission API.
+
+## Endpoint identity (0.2.x cross-tool onboarding)
+
+A configured client's authority comes from the `MW_CLIENT_ID` environment
+variable, not from a tool argument. The MCP server resolves the caller
+identity per tool invocation and records a redacted observation to
+`endpoint_observations` (operation name + timestamp + redacted error
+category). Status derives as:
+
+- `never_seen` — endpoint exists, no observation yet
+- `active` — observation within 24h
+- `stale` — observation older than 24h
+
+Status never claims a network-health probe or IDE online check.
+
+The setup endpoint returns paste-ready JSON for the client platform
+(`mcp/config.py`). The UI never writes IDE config files automatically; the
+user must confirm and paste.
 
 ## Explicitly deferred
 

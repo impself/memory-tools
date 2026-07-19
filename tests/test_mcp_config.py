@@ -25,7 +25,6 @@ from memory_workbench.mcp.config import (
     to_json,
 )
 
-
 REPO = Path(__file__).resolve().parent.parent
 DB = Path(__file__).resolve().parent / "memory.db"
 CLIENT_ID = "codex-local"

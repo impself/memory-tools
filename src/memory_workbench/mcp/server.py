@@ -88,7 +88,7 @@ def _categorize_error(exc: Exception) -> str:
 
 
 def _record_activity(
-    sess,
+    sess: Any,
     *,
     runtime_client_id: str,
     operation: str,
