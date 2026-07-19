@@ -25,3 +25,7 @@ class SecretContent(MemoryError):
 
 class ValidationError(MemoryError):
     """Domain input violates invariants (e.g. missing required scope id)."""
+
+
+class ClientMismatch(MemoryError):
+    """Tool argument client_id conflicts with environment-bound MW_CLIENT_ID."""

@@ -66,6 +66,22 @@ class EndpointPlatform(StrEnum):
     CUSTOM = "custom"
 
 
+class EndpointStatus(StrEnum):
+    """Activity-derived status. Never a network-health claim.
+
+    `never_seen` — endpoint exists but no successful observation recorded yet.
+    `active`     — successful MCP operation seen within 24h.
+    `stale`      — last successful observation older than 24h.
+    """
+
+    NEVER_SEEN = "never_seen"
+    ACTIVE = "active"
+    STALE = "stale"
+
+
+ENDPOINT_STALE_THRESHOLD_HOURS = 24
+
+
 class EventType(StrEnum):
     PROPOSED = "memory.proposed"
     APPROVED = "memory.approved"
@@ -233,6 +249,19 @@ class AgentEndpoint(BaseModel):
     display_name: str | None = None
     status: AgentAssetStatus = AgentAssetStatus.ACTIVE
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class EndpointObservation(BaseModel):
+    """Latest successful activity for an endpoint, plus optional redacted error.
+
+    Stored as upsert-by-endpoint — only the newest observation per endpoint.
+    Query text and memory content are never persisted here.
+    """
+
+    endpoint_id: str
+    last_seen_at: datetime
+    last_operation: str
+    last_error_category: str | None = None
 
 
 class Project(BaseModel):

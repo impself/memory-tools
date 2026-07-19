@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from memory_workbench.domain.errors import (
+    ClientMismatch,
     InvalidTransition,
     MemoryError,
     MemoryNotFound,
@@ -25,7 +26,7 @@ def to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, InvalidTransition):
         return HTTPException(status_code=409, detail=str(exc))
-    if isinstance(exc, ValidationError):
+    if isinstance(exc, (ValidationError, ClientMismatch)):
         return HTTPException(status_code=400, detail=str(exc))
     if isinstance(exc, MemoryError):
         return HTTPException(status_code=400, detail=str(exc))
@@ -43,7 +44,7 @@ def to_mcp(exc: Exception) -> dict[str, Any]:
         code = "SECRET_REFUSED"
     elif isinstance(exc, InvalidTransition):
         code = "INVALID_TRANSITION"
-    elif isinstance(exc, ValidationError):
+    elif isinstance(exc, (ValidationError, ClientMismatch)):
         code = "VALIDATION"
     elif isinstance(exc, MemoryError):
         code = "DOMAIN_ERROR"

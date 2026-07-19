@@ -8,7 +8,7 @@ single-process SQLite, no concurrency fan-out.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import case, or_, select
@@ -21,7 +21,10 @@ from memory_workbench.domain.models import (
     AgentAsset,
     AgentAssetStatus,
     AgentEndpoint,
+    ENDPOINT_STALE_THRESHOLD_HOURS,
+    EndpointObservation,
     EndpointPlatform,
+    EndpointStatus,
     EventType,
     MemoryEvent,
     MemoryGrant,
@@ -40,6 +43,7 @@ from memory_workbench.domain.models import (
 from memory_workbench.storage.tables import (
     AgentAssetRow,
     AgentEndpointRow,
+    EndpointObservationRow,
     EventRow,
     MemoryGrantRow,
     MemoryRow,
@@ -421,6 +425,99 @@ def get_asset_for_client_id(session: Session, client_id: str) -> AgentAsset | No
     if endpoint is None:
         return None
     return get_agent_asset(session, endpoint.asset_id)
+
+
+def get_endpoint_for_client_id(session: Session, client_id: str) -> AgentEndpoint | None:
+    row = session.execute(
+        select(AgentEndpointRow).where(AgentEndpointRow.client_id == client_id)
+    ).scalar_one_or_none()
+    return _endpoint_from_row(row) if row else None
+
+
+def get_endpoint(session: Session, endpoint_id: str) -> AgentEndpoint | None:
+    row = session.get(AgentEndpointRow, endpoint_id)
+    return _endpoint_from_row(row) if row else None
+
+
+# --- endpoint activity (status source) ----------------------------------
+
+
+_ALLOWED_ERROR_CATEGORIES = frozenset({
+    "validation",
+    "scope",
+    "not_found",
+    "secret_refused",
+    "invalid_transition",
+    "internal",
+})
+
+
+def record_endpoint_observation(
+    session: Session,
+    *,
+    endpoint_id: str,
+    operation: str,
+    error_category: str | None = None,
+) -> EndpointObservation:
+    """Upsert latest activity. Redacts error to a bounded category bucket.
+
+    Never stores query text, memory content, or raw exception strings.
+    """
+    if error_category is not None and error_category not in _ALLOWED_ERROR_CATEGORIES:
+        error_category = "internal"
+    row = session.get(EndpointObservationRow, endpoint_id)
+    now = utcnow()
+    if row is None:
+        row = EndpointObservationRow(
+            endpoint_id=endpoint_id,
+            last_seen_at=now,
+            last_operation=operation,
+            last_error_category=error_category,
+        )
+        session.add(row)
+    else:
+        row.last_seen_at = now
+        row.last_operation = operation
+        row.last_error_category = error_category
+    return EndpointObservation(
+        endpoint_id=row.endpoint_id,
+        last_seen_at=row.last_seen_at,
+        last_operation=row.last_operation,
+        last_error_category=row.last_error_category,
+    )
+
+
+def get_endpoint_observation(
+    session: Session, endpoint_id: str
+) -> EndpointObservation | None:
+    row = session.get(EndpointObservationRow, endpoint_id)
+    if row is None:
+        return None
+    return EndpointObservation(
+        endpoint_id=row.endpoint_id,
+        last_seen_at=row.last_seen_at,
+        last_operation=row.last_operation,
+        last_error_category=row.last_error_category,
+    )
+
+
+def derive_endpoint_status(
+    session: Session, endpoint_id: str, *, now: datetime | None = None
+) -> EndpointStatus:
+    """Status from latest observation timestamp; never a network probe."""
+    observation = get_endpoint_observation(session, endpoint_id)
+    if observation is None:
+        return EndpointStatus.NEVER_SEEN
+    moment = now or utcnow()
+    last_seen = observation.last_seen_at
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    age = moment - last_seen
+    if age.total_seconds() > ENDPOINT_STALE_THRESHOLD_HOURS * 3600:
+        return EndpointStatus.STALE
+    return EndpointStatus.ACTIVE
 
 
 def add_memory_grant(

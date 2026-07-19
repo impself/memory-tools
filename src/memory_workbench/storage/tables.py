@@ -130,6 +130,20 @@ class MemoryGrantRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class EndpointObservationRow(Base):
+    """Latest successful activity for an endpoint. Upsert by endpoint_id.
+
+    Spec §10: never stores query text or memory content. last_error_category
+    is a redacted bucket (e.g. "validation" | "scope" | "internal").
+    """
+
+    __tablename__ = "endpoint_observations"
+    endpoint_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    last_operation: Mapped[str] = mapped_column(String(32))
+    last_error_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 # Helpful indexes for common searches
 Index("ix_memories_state_kind", MemoryRow.state, MemoryRow.kind)
 Index("ix_memories_subject_predicate", MemoryRow.subject, MemoryRow.predicate)
